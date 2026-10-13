@@ -6,7 +6,9 @@ Written 2026-10-12. Plain text on purpose. This describes the game's data format
 understands them, and how each piece was worked out. Some of it is solid (verified against many files),
 some is a best guess; the guesses are marked.
 
-Credits and sources: the pak / texture / model layouts started from retrotool's MP4 branch and from mp4x(mp4x was made by ai after analysing models itself and making its own tool seperate from logicfox's), which is the reference for characters. Everything else came from looking at the files themselves,
+Credits and sources: the pak / texture / model layouts started from retrotool's MP4 branch and from mp4x
+(mp4x was made by ai after analysing models itself and making its own tool seperate from logicfox's),
+which is the reference for characters. Everything else came from looking at the files themselves,
 from running the game in an emulator and watching what it read, and from testing guesses against data
 the game already contains (explained below).
 
