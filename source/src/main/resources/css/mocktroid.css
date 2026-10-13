@@ -1,0 +1,675 @@
+/*
+ * Mocktroid stylesheet -- v2 (tab-bar / split browse+preview / custom window
+ * chrome), matching Mocktroid/reference/how i want it to look *.png.
+ *
+ * Palette (Claude's call -- the mockups didn't specify color):
+ *   background void       #05090d
+ *   panel fill            rgba(10,26,38,0.6)
+ *   panel fill (hover)    rgba(18,44,60,0.8)
+ *   panel fill (active)   rgba(28,70,90,0.9)
+ *   accent cyan           #4fd8f0
+ *   accent cyan (bright)  #7fe8ff
+ *   accent green          #4dffa0   -- emphasis only (preview title)
+ *   text primary          #cdeef5
+ *   text dim              #5c8290
+ *
+ * Everything here is CSS-drawn (panels, tabs, buttons, backgrounds,
+ * scrollbar) except the handful of unique-content raster assets loaded via
+ * GameIcons/LoadingSpinner (visor, morph-ball spinner, Screw Attack S
+ * placeholder, Infinite logo watermark) -- see roadmap.md.
+ */
+
+.root {
+    -fx-font-family: "Eurostile", "Century Gothic", "Verdana", sans-serif;
+    -fx-background-color: #05090d;
+}
+
+.root-layout {
+    -fx-background-color: radial-gradient(center 50% 30%, radius 100%, #0c1e2c, #05090d);
+    -fx-border-color: rgba(79,216,240,0.3);
+    -fx-border-width: 1;
+}
+
+/* ---------- Window chrome (always visible) ---------- */
+
+.chrome-bar {
+    -fx-background-color: rgba(4, 10, 15, 0.9);
+}
+
+.window-button {
+    -fx-background-color: rgba(12, 32, 46, 0.7);
+    -fx-text-fill: #7fe8ff;
+    -fx-font-size: 11px;
+    -fx-min-width: 26px;
+    -fx-min-height: 22px;
+    -fx-max-width: 26px;
+    -fx-max-height: 22px;
+    -fx-background-radius: 2;
+    -fx-cursor: hand;
+}
+.window-button:hover {
+    -fx-background-color: rgba(30, 70, 90, 0.9);
+}
+.window-button-close:hover {
+    -fx-background-color: rgba(200, 50, 50, 0.85);
+    -fx-text-fill: white;
+}
+
+/* ---------- Category tab bar ---------- */
+
+.tab-bar {
+    -fx-background-color: transparent;
+}
+
+.category-tab {
+    -fx-background-color: rgba(10, 26, 38, 0.55);
+    -fx-cursor: hand;
+}
+.category-tab:hover {
+    -fx-background-color: rgba(18, 46, 62, 0.8);
+}
+.category-tab.active {
+    -fx-background-color: rgba(30, 90, 115, 0.9);
+    -fx-effect: dropshadow(gaussian, rgba(79,216,240,0.5), 12, 0.3, 0, 0);
+}
+
+.category-tab-label {
+    -fx-text-fill: #a9d8e4;
+    -fx-font-size: 13px;
+    -fx-font-weight: bold;
+    -fx-letter-spacing: 1px;
+}
+.category-tab.active .category-tab-label {
+    -fx-text-fill: #eafcff;
+    -fx-font-size: 16px;
+}
+
+.settings-tab {
+    -fx-background-color: rgba(10, 26, 38, 0.55);
+    -fx-cursor: hand;
+}
+.settings-tab:hover {
+    -fx-background-color: rgba(20, 60, 45, 0.8);
+    -fx-effect: dropshadow(gaussian, rgba(80,255,160,0.4), 10, 0.25, 0, 0);
+}
+.settings-tab-label {
+    -fx-text-fill: #5c8290;
+    -fx-font-size: 8px;
+    -fx-letter-spacing: 0.5px;
+}
+
+/* ---------- Browse pane (list/grid + filter) ---------- */
+
+.browse-pane {
+    -fx-background-color: transparent;
+}
+
+.browse-count-label {
+    -fx-text-fill: #4fd8f0;
+    -fx-font-size: 12px;
+    -fx-font-weight: bold;
+    -fx-letter-spacing: 1px;
+}
+
+.browse-scroll, .browse-scroll .viewport {
+    -fx-background-color: transparent;
+}
+
+/* Both AssetListView and AssetGridView are plain JavaFX ListViews under the
+   hood (see their class docs for why -- virtualization at real romfs scale).
+   Strip the default Modena chrome (white background, cell borders/selection
+   highlight, focus ring) and restyle the scrollbar as the thick glowing bar
+   the reference mockups show. */
+.asset-list-view, .asset-grid-view {
+    -fx-background-color: transparent;
+    -fx-padding: 0;
+}
+.asset-list-view .list-cell, .asset-grid-view .list-cell {
+    -fx-background-color: transparent;
+    -fx-padding: 0 0 6 0;
+}
+.asset-list-view .list-cell:filled:selected, .asset-grid-view .list-cell:filled:selected,
+.asset-list-view .list-cell:filled:hover, .asset-grid-view .list-cell:filled:hover {
+    -fx-background-color: transparent;
+}
+.asset-list-view:focused, .asset-grid-view:focused {
+    -fx-background-color: transparent;
+    -fx-background-insets: 0;
+}
+
+.asset-list-view .scroll-bar:vertical, .asset-grid-view .scroll-bar:vertical {
+    -fx-background-color: transparent;
+    -fx-pref-width: 10px;
+}
+.asset-list-view .scroll-bar:vertical .track, .asset-grid-view .scroll-bar:vertical .track {
+    -fx-background-color: rgba(10,26,38,0.4);
+    -fx-background-radius: 4;
+}
+.asset-list-view .scroll-bar:vertical .thumb, .asset-grid-view .scroll-bar:vertical .thumb {
+    -fx-background-color: linear-gradient(to bottom, #4fd8f0, #1c4a5a);
+    -fx-background-radius: 4;
+    -fx-effect: dropshadow(gaussian, rgba(79,216,240,0.5), 6, 0.3, 0, 0);
+}
+.asset-list-view .increment-button, .asset-list-view .decrement-button,
+.asset-grid-view .increment-button, .asset-grid-view .decrement-button {
+    -fx-background-color: transparent;
+    -fx-padding: 0;
+    -fx-pref-height: 0;
+}
+
+.filter-box {
+    -fx-background-color: rgba(10, 26, 38, 0.5);
+    -fx-border-color: rgba(79,216,240,0.25);
+    -fx-border-width: 1;
+    -fx-padding: 6 12 6 12;
+    -fx-background-radius: 3;
+    -fx-border-radius: 3;
+    -fx-cursor: text;
+}
+.filter-glyph {
+    -fx-text-fill: #5c8290;
+    -fx-font-size: 11px;
+    -fx-letter-spacing: 1px;
+}
+.filter-field {
+    -fx-background-color: transparent;
+    -fx-padding: 0;
+    -fx-text-fill: #cdeef5;
+    -fx-font-size: 12px;
+    -fx-prompt-text-fill: #4a7080;
+}
+.filter-field .text-field, .filter-field:focused {
+    -fx-background-color: transparent;
+    -fx-background-insets: 0;
+}
+
+.paks-popup {
+    -fx-background-color: #0a1a26;
+    -fx-border-color: rgba(79,216,240,0.4);
+    -fx-border-width: 1;
+    -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.6), 12, 0.3, 0, 4);
+}
+.paks-popup-scroll, .paks-popup-scroll .viewport {
+    -fx-background-color: transparent;
+}
+
+/* ---------- Asset list view ---------- */
+
+.asset-list-row {
+    -fx-background-color: rgba(10, 26, 38, 0.5);
+    -fx-cursor: hand;
+}
+.asset-list-row:hover {
+    -fx-background-color: rgba(18, 46, 62, 0.75);
+}
+.asset-list-row.selected {
+    -fx-background-color: rgba(30, 90, 110, 0.85);
+    -fx-effect: dropshadow(gaussian, rgba(79,216,240,0.45), 8, 0.25, 0, 0);
+}
+.asset-list-row-label {
+    -fx-text-fill: #a9d8e4;
+    -fx-font-size: 12px;
+}
+.asset-list-row.selected .asset-list-row-label {
+    -fx-text-fill: #eafcff;
+    -fx-font-weight: bold;
+}
+
+/* ---------- Asset grid view ---------- */
+
+.asset-grid-view {
+    -fx-background-color: transparent;
+}
+
+.asset-card {
+    -fx-background-color: rgba(10, 26, 38, 0.55);
+    -fx-cursor: hand;
+}
+.asset-card:hover {
+    -fx-background-color: rgba(18, 46, 62, 0.85);
+    -fx-effect: dropshadow(gaussian, rgba(79,216,240,0.4), 12, 0.25, 0, 0);
+}
+.asset-card.selected {
+    -fx-background-color: rgba(30, 90, 110, 0.9);
+    -fx-effect: dropshadow(gaussian, rgba(79,216,240,0.55), 14, 0.3, 0, 0);
+}
+
+/* DenyBlink: red outline flash, e.g. double-clicking a model with no animation
+   data. A border rather than a glow -- the angled clip would cut a glow off. */
+.asset-card.deny-blink, .asset-list-row.deny-blink {
+    -fx-background-color: rgba(90, 14, 22, 0.9);
+    -fx-border-color: #ff3b4a;
+    -fx-border-width: 2;
+}
+
+.asset-card-thumb {
+    -fx-background-color: rgba(0,0,0,0.25);
+    -fx-background-radius: 2;
+}
+
+.asset-card-label {
+    -fx-text-fill: #bfe8f0;
+    -fx-font-size: 11px;
+    -fx-text-alignment: center;
+}
+
+/* ---------- Preview pane ---------- */
+
+.preview-pane {
+    -fx-background-color: transparent;
+}
+
+.preview-title {
+    -fx-text-fill: #4dffa0;
+    -fx-font-size: 16px;
+    -fx-font-weight: bold;
+    -fx-effect: dropshadow(gaussian, rgba(77,255,160,0.35), 8, 0.2, 0, 0);
+}
+
+.preview-meta {
+    -fx-text-fill: #5c8290;
+    -fx-font-size: 11px;
+    -fx-letter-spacing: 1px;
+}
+
+.preview-viewport {
+    -fx-background-color: rgba(6, 16, 24, 0.55);
+    -fx-border-color: rgba(79,216,240,0.3);
+    -fx-border-width: 1;
+}
+
+.viewport-bracket {
+    -fx-stroke: #4fd8f0;
+    -fx-stroke-width: 2;
+    -fx-effect: dropshadow(gaussian, rgba(79,216,240,0.6), 4, 0.4, 0, 0);
+}
+
+.preview-fullscreen-toggle {
+    -fx-background-color: rgba(6, 16, 24, 0.7);
+    -fx-text-fill: #4fd8f0;
+    -fx-border-color: rgba(79,216,240,0.4);
+    -fx-border-width: 1;
+    -fx-font-size: 11px;
+    -fx-min-width: 24px;
+    -fx-min-height: 24px;
+    -fx-cursor: hand;
+}
+
+.preview-not-ready {
+    -fx-text-fill: #4a7080;
+    -fx-font-size: 12px;
+}
+
+.transport-bar {
+    -fx-background-color: rgba(10, 26, 38, 0.55);
+    -fx-padding: 8 16 8 16;
+}
+.transport-label {
+    -fx-text-fill: #5c8290;
+    -fx-font-size: 10px;
+    -fx-letter-spacing: 1px;
+}
+.transport-button {
+    -fx-background-color: rgba(6, 16, 24, 0.6);
+    -fx-text-fill: #4fd8f0;
+    -fx-font-size: 11px;
+    -fx-min-width: 26px;
+}
+.transport-scrub .track {
+    -fx-background-color: rgba(6,16,24,0.7);
+}
+.transport-scrub .thumb {
+    -fx-background-color: #4fd8f0;
+}
+.transport-status-label {
+    -fx-text-fill: #5c8290;
+    -fx-font-size: 11px;
+    -fx-padding: 0 4 0 8;
+}
+
+.waveform-view {
+    -fx-background-color: rgba(6, 16, 24, 0.4);
+}
+
+/* Texture viewer: the checkerboard background is set in code (TexturePreview). */
+.texture-viewport {
+    -fx-cursor: move;
+}
+.channel-toggle {
+    -fx-background-color: rgba(6, 16, 24, 0.6);
+    -fx-text-fill: #5c8290;
+    -fx-font-size: 10px;
+    -fx-padding: 3 7 3 7;
+    -fx-background-radius: 0;
+    -fx-cursor: hand;
+}
+.channel-toggle:hover {
+    -fx-text-fill: #a9d8e4;
+}
+.channel-toggle:selected {
+    -fx-background-color: rgba(28, 70, 90, 0.9);
+    -fx-text-fill: #7fe8ff;
+}
+.waveform-loop-marker {
+    -fx-stroke: #4dffa0;
+    -fx-stroke-width: 1.5;
+    -fx-effect: dropshadow(gaussian, rgba(77,255,160,0.6), 4, 0.4, 0, 0);
+}
+.waveform-playhead {
+    -fx-stroke: white;
+    -fx-stroke-width: 1.5;
+    -fx-effect: dropshadow(gaussian, rgba(255,255,255,0.7), 3, 0.4, 0, 0);
+}
+
+/* ---------- Settings ---------- */
+
+.settings-view {
+    -fx-background-color: transparent;
+}
+
+.settings-rail {
+    -fx-background-color: rgba(5, 12, 18, 0.7);
+    -fx-border-color: transparent rgba(79,216,240,0.2) transparent transparent;
+    -fx-border-width: 0 1 0 0;
+}
+
+.settings-content {
+    -fx-background-color: transparent;
+}
+
+.rail-title {
+    -fx-text-fill: #4a7080;
+    -fx-font-size: 11px;
+    -fx-font-weight: bold;
+    -fx-letter-spacing: 2px;
+}
+
+.category-row {
+    -fx-background-color: rgba(12, 32, 46, 0.55);
+    -fx-cursor: hand;
+}
+.category-row:hover {
+    -fx-background-color: rgba(20, 52, 70, 0.75);
+}
+.category-row.selected {
+    -fx-background-color: rgba(30, 90, 110, 0.85);
+    -fx-effect: dropshadow(gaussian, rgba(79,216,240,0.45), 10, 0.25, 0, 0);
+}
+.category-label {
+    -fx-text-fill: #a9d8e4;
+    -fx-font-size: 13px;
+}
+.category-row.selected .category-label {
+    -fx-text-fill: #eafcff;
+    -fx-font-weight: bold;
+}
+
+.settings-row-label {
+    -fx-text-fill: #a9d8e4;
+    -fx-font-size: 13px;
+}
+.settings-hint {
+    -fx-text-fill: #4a7080;
+    -fx-font-size: 11px;
+    -fx-max-width: 420px;
+}
+.settings-textfield {
+    -fx-background-color: rgba(6, 16, 24, 0.7);
+    -fx-text-fill: #cdeef5;
+    -fx-border-color: rgba(79,216,240,0.3);
+    -fx-border-width: 1;
+}
+.settings-secondary-button {
+    -fx-background-color: rgba(12, 32, 46, 0.7);
+    -fx-text-fill: #7fe8ff;
+    -fx-border-color: rgba(79,216,240,0.3);
+    -fx-border-width: 1;
+    -fx-cursor: hand;
+    -fx-font-size: 12px;
+}
+.settings-secondary-button:hover {
+    -fx-background-color: rgba(20, 52, 70, 0.85);
+}
+.settings-checkbox { -fx-text-fill: #a9d8e4; }
+.settings-checkbox .box {
+    -fx-background-color: rgba(12, 32, 46, 0.7);
+    -fx-border-color: rgba(79,216,240,0.4);
+}
+.settings-checkbox:selected .mark { -fx-background-color: #4fd8f0; }
+.settings-slider .track { -fx-background-color: rgba(12, 32, 46, 0.8); }
+.settings-slider .thumb {
+    -fx-background-color: #4fd8f0;
+    -fx-effect: dropshadow(gaussian, rgba(79,216,240,0.6), 6, 0.3, 0, 0);
+}
+.settings-combo, .settings-spinner {
+    -fx-background-color: rgba(12, 32, 46, 0.8);
+    -fx-border-color: rgba(79,216,240,0.3);
+    -fx-border-width: 1;
+    -fx-mark-color: #4fd8f0;
+}
+.settings-combo .list-cell, .settings-spinner .text-field {
+    -fx-text-fill: #cdeef5;
+}
+/* The combo's dropdown list inherits these selectors, so it needs its own
+   dark background -- otherwise the light text above lands on Modena's white
+   popup and every option is invisible (this is why the sort menu looked broken). */
+.settings-combo .list-view {
+    -fx-background-color: #0a1a26;
+    -fx-border-color: rgba(79,216,240,0.45);
+    -fx-border-width: 1;
+    -fx-padding: 2;
+}
+.settings-combo .list-view .list-cell {
+    -fx-background-color: transparent;
+    -fx-padding: 5 10 5 10;
+}
+.settings-combo .list-view .list-cell:hover {
+    -fx-background-color: rgba(28, 70, 90, 0.9);
+}
+.settings-combo .list-view .list-cell:selected {
+    -fx-background-color: rgba(79, 216, 240, 0.22);
+    -fx-text-fill: #7fe8ff;
+}
+.settings-spinner .text-field {
+    -fx-background-color: rgba(6, 16, 24, 0.7);
+}
+.settings-spinner .increment-arrow-button, .settings-spinner .decrement-arrow-button {
+    -fx-background-color: rgba(12, 32, 46, 0.9);
+}
+.settings-spinner .increment-arrow, .settings-spinner .decrement-arrow {
+    -fx-background-color: #4fd8f0;
+}
+.settings-progress .bar {
+    -fx-background-color: #4fd8f0;
+}
+.settings-progress .track {
+    -fx-background-color: rgba(12, 32, 46, 0.8);
+}
+
+.back-button {
+    -fx-background-color: rgba(12, 32, 46, 0.7);
+    -fx-text-fill: #7fe8ff;
+    -fx-border-color: rgba(79,216,240,0.3);
+    -fx-border-width: 1;
+    -fx-padding: 6 14 6 14;
+    -fx-cursor: hand;
+    -fx-font-size: 12px;
+}
+.back-button:hover {
+    -fx-background-color: rgba(20, 52, 70, 0.85);
+}
+
+.restore-defaults-button {
+    -fx-background-color: transparent;
+    -fx-text-fill: #5c8290;
+    -fx-border-color: rgba(79,216,240,0.25);
+    -fx-border-width: 1;
+    -fx-padding: 6 14 6 14;
+    -fx-cursor: hand;
+    -fx-font-size: 11px;
+}
+.restore-defaults-button:hover {
+    -fx-text-fill: #4fd8f0;
+    -fx-border-color: rgba(79,216,240,0.5);
+}
+.settings-footer {
+    -fx-border-color: rgba(79,216,240,0.15) transparent transparent transparent;
+    -fx-border-width: 1 0 0 0;
+}
+
+/* ---------- Onboarding wizard ---------- */
+
+.onboarding-wizard {
+    -fx-background-color: radial-gradient(center 50% 40%, radius 100%, #0c1e2c, #05090d);
+}
+.onboarding-card {
+    -fx-background-color: rgba(10, 26, 38, 0.7);
+    -fx-border-color: rgba(79,216,240,0.3);
+    -fx-border-width: 1;
+    -fx-background-radius: 4;
+    -fx-border-radius: 4;
+}
+.onboarding-title {
+    -fx-text-fill: #7fe8ff;
+    -fx-font-size: 20px;
+    -fx-font-weight: bold;
+    -fx-letter-spacing: 3px;
+    -fx-effect: dropshadow(gaussian, rgba(79,216,240,0.5), 10, 0.3, 0, 0);
+}
+.onboarding-desc {
+    -fx-text-fill: #a9d8e4;
+    -fx-font-size: 13px;
+    -fx-text-alignment: center;
+}
+.onboarding-note {
+    -fx-text-fill: #4a7080;
+    -fx-font-size: 11px;
+    -fx-font-style: italic;
+    -fx-text-alignment: center;
+}
+.onboarding-error {
+    -fx-text-fill: #ff6b6b;
+    -fx-font-size: 11px;
+}
+.onboarding-primary-button {
+    -fx-background-color: rgba(30, 90, 110, 0.9);
+    -fx-text-fill: #eafcff;
+    -fx-font-weight: bold;
+    -fx-padding: 8 20 8 20;
+    -fx-cursor: hand;
+    -fx-effect: dropshadow(gaussian, rgba(79,216,240,0.4), 8, 0.25, 0, 0);
+}
+.onboarding-primary-button:disabled { -fx-opacity: 0.4; }
+.onboarding-secondary-button {
+    -fx-background-color: rgba(12, 32, 46, 0.7);
+    -fx-text-fill: #7fe8ff;
+    -fx-padding: 8 16 8 16;
+    -fx-cursor: hand;
+}
+.onboarding-choice-button {
+    -fx-background-color: rgba(12, 32, 46, 0.7);
+    -fx-text-fill: #a9d8e4;
+    -fx-border-color: rgba(79,216,240,0.3);
+    -fx-border-width: 1;
+    -fx-padding: 10 22 10 22;
+    -fx-font-size: 13px;
+    -fx-cursor: hand;
+}
+.onboarding-choice-button:hover {
+    -fx-background-color: rgba(30, 90, 110, 0.85);
+    -fx-text-fill: #eafcff;
+}
+
+/* ---- custom names: rename button/field in the preview header, right-click menu ---- */
+.preview-rename-button {
+    -fx-background-color: transparent;
+    -fx-text-fill: #6fa6b8;
+    -fx-font-size: 17px;
+    -fx-padding: 0 4 0 4;
+    -fx-cursor: hand;
+}
+.preview-rename-button:hover {
+    -fx-text-fill: #4fd8f0;
+}
+.preview-rename-field {
+    -fx-background-color: #0a1a26;
+    -fx-border-color: rgba(77,255,160,0.6);
+    -fx-border-width: 1;
+    -fx-text-fill: #4dffa0;
+    -fx-prompt-text-fill: #3a6050;
+    -fx-highlight-fill: #1d5a46;
+    -fx-highlight-text-fill: #e6fff2;
+    -fx-font-size: 15px;
+    -fx-font-weight: bold;
+    -fx-padding: 2 6 2 6;
+}
+.mocktroid-menu {
+    -fx-background-color: #0a1a26;
+    -fx-border-color: rgba(79,216,240,0.4);
+    -fx-border-width: 1;
+    -fx-padding: 4;
+}
+.mocktroid-menu .menu-item {
+    -fx-background-color: transparent;
+    -fx-padding: 5 14 5 10;
+}
+.mocktroid-menu .menu-item .label {
+    -fx-text-fill: #cdeef5;
+    -fx-font-size: 12px;
+}
+.mocktroid-menu .menu-item:focused {
+    -fx-background-color: rgba(79,216,240,0.18);
+}
+.mocktroid-menu .menu-item:disabled .label {
+    -fx-text-fill: #3f5a66;
+}
+.mocktroid-menu .separator .line {
+    -fx-border-color: rgba(79,216,240,0.25) transparent transparent transparent;
+}
+
+/* Work-in-progress screen for categories without a browser/preview yet. */
+.wip-pane {
+    -fx-padding: 40 20 60 20;
+}
+.wip-title {
+    -fx-text-fill: #4dffa0;
+    -fx-font-size: 18px;
+    -fx-font-weight: bold;
+    -fx-effect: dropshadow(gaussian, rgba(77,255,160,0.35), 8, 0.2, 0, 0);
+}
+.wip-text {
+    -fx-text-fill: #6f97a8;
+    -fx-font-size: 13px;
+}
+
+/* Preview's "Cache icon" button (top-left of the viewport, models). */
+.preview-cache-icon-button {
+    -fx-background-color: rgba(6, 16, 24, 0.7);
+    -fx-text-fill: #4fd8f0;
+    -fx-border-color: rgba(79,216,240,0.4);
+    -fx-border-width: 1;
+    -fx-font-size: 11px;
+    -fx-padding: 3 8 3 8;
+    -fx-cursor: hand;
+}
+.preview-cache-icon-button:hover {
+    -fx-background-color: rgba(20, 50, 66, 0.85);
+}
+
+/* Model preview camera toggles (tool row above the viewport). */
+.preview-overlay-toggle {
+    -fx-background-color: rgba(6, 16, 24, 0.7);
+    -fx-text-fill: #4fd8f0;
+    -fx-border-color: rgba(79,216,240,0.4);
+    -fx-border-width: 1;
+    -fx-font-size: 11px;
+    -fx-padding: 3 8 3 8;
+    -fx-cursor: hand;
+}
+.preview-overlay-toggle:hover {
+    -fx-background-color: rgba(20, 50, 66, 0.85);
+}
+.preview-overlay-toggle:selected {
+    -fx-background-color: rgba(79, 216, 240, 0.85);
+    -fx-text-fill: #04121a;
+}

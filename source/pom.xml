@@ -1,0 +1,130 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <groupId>com.mocktroid</groupId>
+  <artifactId>mocktroid</artifactId>
+  <version>0.1.0</version>
+  <packaging>jar</packaging>
+
+  <properties>
+    <maven.compiler.release>21</maven.compiler.release>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <javafx.version>21.0.4</javafx.version>
+    <vlcj.version>4.8.3</vlcj.version>
+    <main.class>com.mocktroid.MocktroidApp</main.class>
+    <!-- Extra JVM options for `mvn javafx:run`; the mac profile below swaps in
+         the Dock flags, elsewhere they're harmless placeholders. -->
+    <javafx.run.option1>-Dfile.encoding=UTF-8</javafx.run.option1>
+    <javafx.run.option2>-Dmocktroid.dev=true</javafx.run.option2>
+  </properties>
+
+  <profiles>
+    <!-- Dev-mode-only attempt at a correct Dock icon: `mvn javafx:run`
+         launches a bare JVM process with no .app bundle, so macOS has nothing
+         to associate a real icon with and falls back to a generic one.
+         -Xdock is an Apple-only JVM extension; any other JVM refuses to
+         start with it, hence the OS-activated profile. The one guaranteed fix
+         is proper jpackage .app packaging (embeds a real .icns via
+         Info.plist), which is a planned but not-yet-done step. -->
+    <profile>
+      <id>mac</id>
+      <activation>
+        <os><family>mac</family></os>
+      </activation>
+      <properties>
+        <javafx.run.option1>-Xdock:name=Mocktroid</javafx.run.option1>
+        <javafx.run.option2>-Xdock:icon=${project.basedir}/src/main/resources/icons/app-icon.png</javafx.run.option2>
+      </properties>
+    </profile>
+  </profiles>
+
+  <dependencies>
+    <!-- JavaFX -->
+    <dependency>
+      <groupId>org.openjfx</groupId>
+      <artifactId>javafx-controls</artifactId>
+      <version>${javafx.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.openjfx</groupId>
+      <artifactId>javafx-graphics</artifactId>
+      <version>${javafx.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.openjfx</groupId>
+      <artifactId>javafx-base</artifactId>
+      <version>${javafx.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.openjfx</groupId>
+      <artifactId>javafx-media</artifactId>
+      <version>${javafx.version}</version>
+    </dependency>
+
+    <!-- VLCJ: FMV0/MP4 video playback (drives system libVLC) -->
+    <dependency>
+      <groupId>uk.co.caprica</groupId>
+      <artifactId>vlcj</artifactId>
+      <version>${vlcj.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>uk.co.caprica</groupId>
+      <artifactId>vlcj-javafx</artifactId>
+      <version>1.2.0</version>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <finalName>mocktroid</finalName>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <version>3.13.0</version>
+      </plugin>
+
+      <!-- `mvn javafx:run` for fast local dev iteration -->
+      <plugin>
+        <groupId>org.openjfx</groupId>
+        <artifactId>javafx-maven-plugin</artifactId>
+        <version>0.0.8</version>
+        <configuration>
+          <mainClass>${main.class}</mainClass>
+          <options>
+            <option>${javafx.run.option1}</option>
+            <option>${javafx.run.option2}</option>
+          </options>
+        </configuration>
+      </plugin>
+
+      <!-- Produces target/mocktroid-jar-with-dependencies.jar for jlink/jpackage -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-assembly-plugin</artifactId>
+        <version>3.7.1</version>
+        <configuration>
+          <archive>
+            <manifest>
+              <mainClass>${main.class}</mainClass>
+            </manifest>
+          </archive>
+          <descriptorRefs>
+            <descriptorRef>jar-with-dependencies</descriptorRef>
+          </descriptorRefs>
+          <appendAssemblyId>false</appendAssemblyId>
+        </configuration>
+        <executions>
+          <execution>
+            <phase>package</phase>
+            <goals>
+              <goal>single</goal>
+            </goals>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
+</project>

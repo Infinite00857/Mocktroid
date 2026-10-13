@@ -1,0 +1,179 @@
+MOCKTROID - WHAT WE LEARNED ABOUT METROID PRIME 4: BEYOND'S FILES, AND HOW
+
+mostly written by ai, slightly changed by infinite. anytime it mentions "the user" its referring to infinite (Infinite00857 in github)
+
+Written 2026-10-12. Plain text on purpose. This describes the game's data formats as far as Mocktroid
+understands them, and how each piece was worked out. Some of it is solid (verified against many files),
+some is a best guess; the guesses are marked.
+
+Credits and sources: the pak / texture / model layouts started from retrotool's MP4 branch and from mp4x(mp4x was made by ai after analysing models itself and making its own tool seperate from logicfox's), which is the reference for characters. Everything else came from looking at the files themselves,
+from running the game in an emulator and watching what it read, and from testing guesses against data
+the game already contains (explained below).
+
+
+1. THE GENERAL APPROACH
+
+Most of the formats are packed binary with no labels, so the method was usually:
+
+- Find something in the file whose correct answer is already known, then write a guess and check it
+  against that answer across hundreds of files. Example: a character file stores both a joint hierarchy
+  with local transforms AND each skinned joint's exact world position (inverse bind matrices). If a guess
+  about the local transforms is right, chaining them reproduces the exact positions. That one check
+  settled most of the skeleton questions.
+- Scan for signatures instead of reading field by field, when the layout varies: FourCC tags, GUIDs that
+  the romfs index confirms are real assets, runs of unit quaternions, hash arrays that match a string table.
+- Render the result and compare it with screenshots from the real game (the user provided many).
+- Small throwaway tools (in the scratchpad) printed statistics: "how many joints match", "mean angle
+  between clip rotation and identity", and so on. Numbers like "105 of 108 joints match" are from those.
+
+
+2. ROMFS AND PAKS
+
+- The romfs holds about 441 .pak files (plus an encrypted update.nsp that has to be dumped by an
+  emulator). Paks are catalogued by reading only their header region: an asset table of
+  (type FourCC, GUID, offset, size, compressed size, name). Assets inside are often compressed and are
+  decompressed on demand.
+- Every asset has a 128-bit GUID. Assets refer to each other by GUID (stored little-endian), which is
+  how models find materials, materials find textures, characters find models, and so on. Searching any
+  file for the 16 bytes of a GUID is a reliable way to find who uses what.
+- Inside a pak, assets are listed in GUID order, not in any meaningful order.
+- The update ships replacement paks with the same relative paths as the base game, so a dumped update
+  romfs can simply override base paks by path.
+
+
+3. TEXTURES (TXTR)
+
+- Header: kind (2D, 3D, cube, 2D array, ...), format, width, height, layer count, mip count, mip sizes,
+  filter and wrap. Data is stored swizzled for the Switch GPU and is deswizzled into linear blocks.
+- Formats seen: BC1-BC7 (BC6H for HDR), ASTC of many block sizes (4x4 up to 8x8), RGBA8, R8, float formats.
+- 2D arrays: 499 have 4 layers (material layer stacks, not animations). 113 have 8 or more layers; those
+  are flipbooks (smoke, screens) where each layer is one frame. 3D textures of 32^3 / 33^3 are colour
+  lookup tables and noise volumes.
+- Most ASTC normal maps keep X in RGB (all three equal) and Y in alpha, the usual ASTC two-channel layout.
+  Reading them as RGB is what made the arm cannon look like frozen z-fighting. Detected by "R=G=B
+  everywhere while alpha varies"; Z is rebuilt from X and Y.
+- UI animations are NOT arrays: each frame is its own texture (UI_HUD.pak has five 31-frame 180x180
+  icons). The UI's room file only lists them as dependencies; the frame order lives in UI data that is
+  not decoded yet. Mocktroid currently finds these by look: same size and format in a UI pak, tiny
+  thumbnails that are nearly identical, ordered by walking from one end to the most similar next frame.
+  (Guess-based ordering; the real order may differ.)
+
+
+4. MODELS (CMDL / SMDL) AND MATERIALS (MATI / MTRL)
+
+- Models hold vertex streams (positions, normals, UVs, and for skinned SMDLs 4 joint indices + 4 weights
+  per vertex), index buffers, submeshes (material, stream, index range) and an LOD table. Only LOD 0 is
+  drawn. One LOD range is drawn with blending (visors, glass).
+- The game is Y-up. UVs are bottom-left based relative to the decoded image.
+- Materials: newer models reference a MATI (material instance) that lists texture slots as
+  tag + type byte 5 + GUID, plus values as tag + type byte 3 + four floats. Found by scanning for that
+  pattern and confirming the GUID is a real texture.
+- Texture slots: BCLR base colour, NMAP normal map, METL packed metal (red) and roughness (green),
+  ICAN incandescence (glow), TCH0-TCH5 extra layers, REFL a reflection probe, MNMP a second normal map.
+  Value tags seen: DIFC (diffuse colour), ICMC, ICNC (glow strength, about 3 on the Varia suit), CCHn,
+  BKLT. Their exact use in shaders is not known yet.
+- Base colour alpha is NOT opacity on opaque meshes: on the suits it is the glow mask (where the lights
+  are). On blended meshes it is opacity. On the face texture it is a cut-out (eyelash cards).
+- ICAN comes in two kinds, told apart by size: the same size as the base colour means a glow texture in
+  the model's own UV layout (visor HUD lines, cinematic gun fire-shot panels); a small texture means a
+  lookup table indexed by the base colour alpha (across) and by time (down). A tall thin ramp whose rows
+  change (the arm cannon's 8x256 orange vent light) is an animation of a bright band moving up and down.
+  The timing is a guess. One colour with a single bright row (Sylux's green) is a steady glow with a flash.
+- Metal parts get their real colour from reflections, which the previewer can't draw, so their base
+  colour is darkened by the METL metalness. That is why the Varia suit looked pale orange and the cannon
+  pale cyan; in game they are bronze and dark teal, and the base textures are correct.
+- Viola bikes: a 1-pixel-tall colour strip (TCH1) indexed by a grey map (TCH2) paints the iridescent finish.
+- First-person arm cannons carry an ice shell: a separate snow-and-icicles mesh (one shared material,
+  MATI 8c4c0e03) over the barrel that the game shows in cold areas.
+- Varia and Psychic draw their visor as an opaque mesh (no blended submesh). Recognised as: a small mesh
+  bound entirely to one joint, with its own material, using the body's base colour and a full-size glow map.
+
+
+5. CHARACTERS (CHPR): SKELETONS
+
+A CHPR bundles skeleton, skins, animation clips and events, in a packed body with no aligned field table.
+Each part is found by a signature:
+
+- Names: an FNV-1a hash array followed by a string index array of the same length, starting with
+  "root.anchorBlend". (Found by hashing every string in the file's string table and looking for runs of
+  matching hashes.)
+- Node table: 4 bytes per node, the kind byte 0x62 for joints. Joint index = 170 * bank + offset / 3.
+- Hierarchy records: 03 bank parentBank switches banks; 04 / 05 / 07 records give
+  (self * 6, parent * 6, c). The last field c is the joint's "pose address": slot | row << 6. Animation
+  clips write to exactly these addresses (see section 6).
+- Local bind transforms: a table of (qw, qx, qy, qz, tx, ty, tz) records, found as the longest run of
+  unit quaternions.
+- Skins: a joint palette per vertex slot plus inverse bind matrices.
+
+The big discovery here: for 04 records, the transform table is stored slot by slot. A joint's row is
+(number of rows in all lower slots) + its row in its slot. mp4x's formula (c >> 6) / 5 is the special case
+of a single slot, and it silently broke every rig whose joints span several slots (Sylux and Lockjaw use
+slots 5-8, the player rig uses about 30). Some rows belong to records that aren't parsed, so each slot's
+start is calibrated by vote: for skinned joints with a skinned parent, the exact local transform is
+inverse(parent world) * own world (from the inverse bind matrices), and the table row that matches it
+tells where that slot starts. Results: Sylux 78/80 joints exact, cinematic gun 50/50, Samus 54/58 (the
+rest are ties between identical rows).
+
+The player rig (f1ed30ec, 294 joints for the first-person arms, third-person Samus and the bike) needed
+two more things: its transform table continues after a 4-byte break, and the slots of its root and
+arm-base joints have no rows at all. They are identity, found by trying every "guessed rows or identity"
+combination for the slots that sit above skinned joints, and keeping the one that rebuilds the skinned
+bind poses exactly.
+
+
+6. CHARACTERS (CHPR): ANIMATION CLIPS
+
+- Clips are payloads after a 01 01 <u32 clip id> FF FF FF FF record: size, descriptor offset, bitstream
+  offset, rate (always 1.0 so far), frame count, a 48-bit output slot mask.
+- They are decoded the way the game does it, reversed from the game's code (GameFramework.nss) while
+  tracing the running game in an emulator: a bit-packed stream table, a small descriptor bytecode that
+  sets each channel's bit width, sign and fraction bits, then a forward-only key stream per channel
+  (each frame says how many channels hit a key, their next-key distances, and the new values per group
+  type: rotation, vector, flags, scalar, raw int). Sampling runs another small bytecode that writes joint
+  transforms (rotation, scale, translation), floats and ints to pose addresses.
+- Which payload belongs to which clip: payload id = clip index + a per-file offset, found by voting on
+  matching frame counts.
+- Joint transforms are relative to the bind pose: rotation = clip * bind, translation = bind + clip, scale
+  absolute. Verified statistically: in idle clips, clip rotations average 5 degrees from identity and
+  about 100 degrees from the bind rotations.
+- Values a clip holds for its whole length are not stored in the clip. They index a constant float pool
+  per CHPR: after the bytes 01 00 00 00 00 01 <n> 00 00 00 come n pools of (u16 index, u16 count, floats),
+  each starting 1, 0, 0, 0 (identity rotation / zero). Found by noticing the references point at small
+  indices like 0, 1 and 4, then searching the file for a float run starting 1, 0, 0, 0 followed by unit
+  quaternions; the CHPR body is unaligned, so it only showed up at 2-byte alignment. This fixed held poses
+  (Sylux's shoulder spikes, closed fingers).
+- Root motion: the whole-body placement is written at index 0 of the top joint's slot, and the travel at
+  index 0 of the next slot (addresses owned by root joints whose records aren't decoded).
+- Clips can live in a different CHPR than the skeleton: the first-person clips are in the player CHPR
+  (7238eaad, about 500 clips, no skeleton of its own), which lists every model of the player (first-person
+  arms per suit, third person, bikes). The address numbering matched the player rig f1ed30ec.
+- Frame rate: 60 fps (confirmed by the user against the game).
+- Cutscene clips are named <cutscene>_shotNN_<actor>, one CHPR per actor per cutscene, including a
+  CinematicCamera actor. That naming is the basis of the planned cinematic viewer.
+
+
+7. VIDEOS (FMV0)
+
+- An RFRM header followed by a normal MP4 (H.264 video, 5.1 AAC audio). One video is a WebM (VP9 +
+  Vorbis) instead, which has to be converted with ffmpeg to play in JavaFX.
+- Windows' H.264 decoder sometimes refuses to start while another player is still opening, which showed
+  up as random "media invalid" errors; retrying fixes it.
+
+
+8. SOUNDS (CSMP / CAUD)
+
+- CSMP holds the audio, decoded with vgmstream; durations and loop points come from its header. CAUD
+  are sound "events" that point at CSMPs.
+- The menu sounds Mocktroid now uses for its own interface were found by the user listening through the
+  Sounds tab and renaming them.
+
+
+9. THINGS STILL UNKNOWN
+
+- ROOM and FSMC (state machines): needed to place level geometry and to sequence cutscenes. Not
+  documented anywhere yet.
+- Shaders: how the material values (ICNC, CCHn, BKLT) combine, the visor's inner pattern and scan effect,
+  the arm cannon's green side lights and orange side strips (their mask isn't in any texture slot found).
+- UI animation frame order.
+- Why some first-person fingers and some psydroid / Griever clips still pose wrongly (probably more rig
+  quirks like the ones in section 5).
