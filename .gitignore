@@ -1,0 +1,48 @@
+# --- Build output (Maven) ---
+source/target/
+target/
+
+# --- macOS / Windows / Linux junk ---
+.DS_Store
+._*
+Thumbs.db
+desktop.ini
+*~
+
+# --- IDEs / editors ---
+.idea/
+*.iml
+.vscode/
+.classpath
+.project
+.settings/
+.factorypath
+nbproject/
+
+# --- Java ---
+*.class
+*.log
+hs_err_pid*
+replay_pid*
+
+# --- Machine-specific launcher overrides (see "Run Mocktroid.bat") ---
+Run Mocktroid.local.bat
+
+# --- Local copies of optional external tools ---
+/tools/vgmstream/
+/tools/ffmpeg/
+
+# --- Never commit game data ---
+# Mocktroid reads a romfs dump you supply; none of it belongs in this repo.
+romfs/
+*.pak
+*.pak.patch
+*.nsp
+*.nca
+*.xci
+*.nsz
+
+# --- Local caches / scratch ---
+scratch/
+scratchpad/
+*.tmp

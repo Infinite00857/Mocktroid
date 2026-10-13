@@ -1,2 +1,15 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# Keep launcher scripts runnable on their own platform
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.sh text eol=lf
+*.command text eol=lf
+
+# Binary assets
+*.png binary
+*.gif binary
+*.mp4 binary
+*.ico binary
+*.icns binary
