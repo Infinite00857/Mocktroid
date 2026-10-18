@@ -33,8 +33,6 @@ public final class AnimationSupport {
     private static final Map<UUID, Map<Integer, Integer>> PAYLOADS = new ConcurrentHashMap<>();
     /** Per CHPR: its constant pools (values clips hold for their whole length). */
     private static final Map<UUID, List<float[]>> POOLS = new ConcurrentHashMap<>();
-    private record Bytes(UUID chpr, byte[] data) {}
-    private static volatile Bytes last;
 
     private AnimationSupport() {}
 
@@ -148,10 +146,18 @@ public final class AnimationSupport {
         return out;
     }
 
+    /** The few most recent decompressed CHPRs (they run to 13 MB; a model's clips span several files). */
+    private static final Map<UUID, byte[]> RECENT = java.util.Collections.synchronizedMap(new LinkedHashMap<>(4, 0.75f, true) {
+        @Override
+        protected boolean removeEldestEntry(Map.Entry<UUID, byte[]> eldest) {
+            return size() > 3;
+        }
+    });
+
     private static byte[] bytesOf(UUID chpr, AssetLibrary library) {
-        Bytes cached = last;
-        if (cached != null && cached.chpr().equals(chpr)) {
-            return cached.data();
+        byte[] hit = RECENT.get(chpr);
+        if (hit != null) {
+            return hit;
         }
         PakAssetRef ref = library.lookup(chpr);
         if (ref == null) {
@@ -159,7 +165,7 @@ public final class AnimationSupport {
         }
         try {
             byte[] d = PackCatalog.extractDecompressed(ref.pakFile(), ref.asset());
-            last = new Bytes(chpr, d);
+            RECENT.put(chpr, d);
             return d;
         } catch (IOException | RuntimeException e) {
             return null;

@@ -582,6 +582,14 @@ public final class SettingsView extends HBox {
         visorHint.getStyleClass().add("settings-hint");
         visorHint.setWrapText(true);
 
+        CheckBox smoothBox = new CheckBox("Extra smooth textures");
+        smoothBox.getStyleClass().add("settings-checkbox");
+        smoothBox.selectedProperty().bindBidirectional(settings.smoothTexturesProperty());
+        Label smoothHint = new Label("Doubles model texture resolution with smoothing, so seams and fine detail don't show "
+            + "stair steps up close. Uses about 4x the memory per model (300-400 MB for a Samus suit) and loads slower.");
+        smoothHint.getStyleClass().add("settings-hint");
+        smoothHint.setWrapText(true);
+
         CheckBox hideVisorBox = new CheckBox("Hide visors");
         hideVisorBox.getStyleClass().add("settings-checkbox");
         hideVisorBox.selectedProperty().bindBidirectional(settings.hideVisorsProperty());
@@ -661,6 +669,7 @@ public final class SettingsView extends HBox {
             skyboxHint,
             settingRow(visorBox, null), visorHint,
             settingRow(hideVisorBox, null), hideVisorHint,
+            settingRow(smoothBox, null), smoothHint,
             settingRow(frostLabel, frostBox), frostHint,
             settingRow(floorBox, null), floorHint,
             settingRow(autoplayAnimBox, null), settingRow(nextAnimBox, null),

@@ -117,9 +117,13 @@ public final class TextureThumbnailCache {
             Thumb thumb = null;
             try {
                 thumb = loadFromDisk(id);
-                if (thumb == null) {
+                if (thumb == null && !com.mocktroid.library.ThumbFiles.isMarkedUnrenderable(fileFor(id))) {
                     thumb = generate(entry);
-                    saveToDisk(id, thumb);
+                    if (thumb != null) {
+                        saveToDisk(id, thumb);
+                    } else {
+                        com.mocktroid.library.ThumbFiles.markUnrenderable(fileFor(id));
+                    }
                 }
             } catch (Exception | OutOfMemoryError e) {
                 thumb = null;
@@ -182,36 +186,12 @@ public final class TextureThumbnailCache {
     }
 
     private Thumb loadFromDisk(UUID id) {
-        Path file = fileFor(id);
-        if (!Files.exists(file)) {
-            return null;
-        }
-        try (DataInputStream in = new DataInputStream(new InflaterInputStream(Files.newInputStream(file)))) {
-            int w = in.readInt();
-            int h = in.readInt();
-            int[] argb = new int[w * h];
-            for (int i = 0; i < argb.length; i++) {
-                argb[i] = in.readInt();
-            }
-            return new Thumb(w, h, argb);
-        } catch (IOException e) {
-            return null;
-        }
+        int[] d = com.mocktroid.library.ThumbFiles.read(fileFor(id));
+        return d == null ? null : new Thumb(d[0], d[1], java.util.Arrays.copyOfRange(d, 2, d.length));
     }
 
     private void saveToDisk(UUID id, Thumb thumb) {
-        try {
-            Files.createDirectories(cacheDir);
-            try (DataOutputStream out = new DataOutputStream(new DeflaterOutputStream(Files.newOutputStream(fileFor(id))))) {
-                out.writeInt(thumb.width());
-                out.writeInt(thumb.height());
-                for (int p : thumb.argb()) {
-                    out.writeInt(p);
-                }
-            }
-        } catch (IOException ignored) {
-            // A failed cache write just means regenerating next time.
-        }
+        com.mocktroid.library.ThumbFiles.write(fileFor(id), thumb.width(), thumb.height(), thumb.argb());
     }
 
     public int countOnDisk() {
@@ -233,7 +213,7 @@ public final class TextureThumbnailCache {
             return;
         }
         try (Stream<Path> files = Files.list(cacheDir)) {
-            files.filter(p -> p.toString().endsWith(".thumb")).forEach(p -> {
+            files.filter(p -> p.toString().endsWith(".thumb") || p.toString().endsWith(".none")).forEach(p -> {
                 try {
                     Files.deleteIfExists(p);
                 } catch (IOException ignored) {

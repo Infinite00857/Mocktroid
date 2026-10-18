@@ -108,7 +108,7 @@
         <configuration>
           <archive>
             <manifest>
-              <mainClass>${main.class}</mainClass>
+              <mainClass>com.mocktroid.Launcher</mainClass>
             </manifest>
           </archive>
           <descriptorRefs>

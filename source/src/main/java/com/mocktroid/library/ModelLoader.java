@@ -105,7 +105,8 @@ public final class ModelLoader {
             return slots;
         }
         for (int i = 0; i + 21 <= d.length; i++) {
-            if (d[i + 4] != MATI_TEXTURE_TYPE || !isTag(d, i)) {
+            // Type 5 = texture; type 8 = texture with sampler settings (the map holograms' base colour).
+            if ((d[i + 4] != MATI_TEXTURE_TYPE && d[i + 4] != 8) || !isTag(d, i)) {
                 continue;
             }
             UUID tex = GuidUtil.fromBytesLe(d, i + 5);

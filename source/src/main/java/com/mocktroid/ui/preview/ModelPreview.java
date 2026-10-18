@@ -132,6 +132,7 @@ public final class ModelPreview {
         AppSettings.get().transparentVisorProperty().addListener(visorListener);
         AppSettings.get().hideVisorsProperty().addListener(hideVisorListener);
         AppSettings.get().cannonFrostProperty().addListener(frostListener);
+        AppSettings.get().smoothTexturesProperty().addListener(smoothListener);
         glowTimer.setCycleCount(javafx.animation.Animation.INDEFINITE);
         viewport.getStyleClass().add("model-viewport");
         viewport.setMinSize(0, 0);
@@ -162,6 +163,7 @@ public final class ModelPreview {
         AppSettings.get().transparentVisorProperty().removeListener(visorListener);
         AppSettings.get().hideVisorsProperty().removeListener(hideVisorListener);
         AppSettings.get().cannonFrostProperty().removeListener(frostListener);
+        AppSettings.get().smoothTexturesProperty().removeListener(smoothListener);
         glowTimer.stop();
         AppSettings.get().animationFpsProperty().removeListener(fpsListener);
         AppSettings.get().renderResolutionProperty().removeListener(renderSizeListener);
@@ -227,6 +229,17 @@ public final class ModelPreview {
         AssetIconCache.get().store(entry, shot);
         return true;
     }
+
+    /** Settings > Extra smooth textures: re-decodes every texture at the new size. */
+    private final javafx.beans.InvalidationListener smoothListener = o -> {
+        ModelLoader.LoadedModel loaded = loadedModel;
+        if (loaded == null || disposed) {
+            return;
+        }
+        Thread t = new Thread(() -> loadTextures(loaded, new ArrayList<>(meshViews)), "model-textures");
+        t.setDaemon(true);
+        t.start();
+    };
 
     /** Settings > Arm Cannon Frost: the opacity of the cannon's ice shell. */
     private final javafx.beans.InvalidationListener frostListener = o -> applyFrost();
@@ -297,7 +310,12 @@ public final class ModelPreview {
         bonesToggle.getStyleClass().add("channel-toggle");
         bonesToggle.setDisable(true);
         bonesToggle.setTooltip(new javafx.scene.control.Tooltip("Show the skeleton (skinned models)"));
-        bonesToggle.setOnAction(e -> bonesGroup.setVisible(bonesToggle.isSelected()));
+        bonesToggle.setOnAction(e -> {
+            bonesGroup.setVisible(bonesToggle.isSelected());
+            if (bonesToggle.isSelected() && lastPosed != null) {
+                drawBones(lastPosed); // catch up: hidden overlays aren't updated
+            }
+        });
         bonesGroup.setVisible(false);
         bonesGroup.setDepthTest(javafx.scene.DepthTest.DISABLE);
         Button reset = new Button("Reset view");
@@ -345,6 +363,17 @@ public final class ModelPreview {
 
     /** The pose with its addresses moved onto this skeleton's; transforms with no matching joint are dropped. */
     private AnimClip.Pose remapped(AnimClip.Pose pose) {
+        if (pose != null && !frozenAddresses.isEmpty()) {
+            AnimClip.Pose kept = new AnimClip.Pose();
+            pose.transforms.forEach((addr, x) -> {
+                if (!frozenAddresses.contains(addr)) {
+                    kept.transforms.put(addr, x);
+                }
+            });
+            kept.floats.putAll(pose.floats);
+            kept.ints.putAll(pose.ints);
+            pose = kept;
+        }
         if (remap == null || pose == null) {
             return pose;
         }
@@ -474,7 +503,10 @@ public final class ModelPreview {
             return;
         }
         animNotice.setText("Decoding clip\u2026");
-        Thread decode = new Thread(() -> {
+        Runnable decode = () -> {
+            if (this.clip != clip || disposed) {
+                return; // already moved on to another clip
+            }
             AnimClip decoded;
             try {
                 decoded = AnimationSupport.decode(clip, library);
@@ -492,6 +524,7 @@ public final class ModelPreview {
                 if (remap != null && remap.isEmpty()) {
                     remap = null;
                 }
+                double[] previousBody = lastFollowPos;
                 lastFollowPos = null;
                 if (result == null) {
                     animNotice.setText("This clip's key data wasn't found in its character file. Z / X (or ctrl+wheel) step one frame.");
@@ -502,15 +535,19 @@ public final class ModelPreview {
                         + "Z / X (or ctrl+wheel) step one frame.");
                 }
                 applyPose();
-                frameOnModel();
+                // The camera stays where it is in the world between clips (moving it by the body's
+                // offset crept it down and sideways over a run of short clips); only the first clip
+                // after loading frames the model.
+                if (previousBody == null) {
+                    frameOnModel();
+                }
                 if (anim != null && (AppSettings.get().autoplayAnimationsProperty().get() || PlayChain.take())
                     && player.getStatus() != javafx.animation.Animation.Status.RUNNING) {
                     togglePlay();
                 }
             });
-        }, "clip-decode");
-        decode.setDaemon(true);
-        decode.start();
+        };
+        CLIP_DECODER.execute(decode);
         int frames = Math.max(1, clip.clip().frames());
         frameSlider.setMax(frames - 1);
         frameSlider.setValue(0);
@@ -532,6 +569,14 @@ public final class ModelPreview {
         int next = (int) Math.round(frameSlider.getValue()) + delta;
         frameSlider.setValue(next > max ? 0 : next < 0 ? max : next);
     }
+
+    /** One decoder for every preview: quickly stepping through clips no longer starts a thread (and a
+     *  multi-megabyte character file decompression) per clip; superseded clips are skipped. */
+    private static final java.util.concurrent.ExecutorService CLIP_DECODER = java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
+        Thread t = new Thread(r, "clip-decode");
+        t.setDaemon(true);
+        return t;
+    });
 
     private void togglePlay() {
         com.mocktroid.ui.UiSounds.get().play(com.mocktroid.ui.UiSounds.Cue.PAUSE_RESUME);
@@ -565,6 +610,14 @@ public final class ModelPreview {
                 List<MeshView> views = buildMeshes(loaded.model());
                 java.util.Set<Integer> visors = markVisors(loaded, views);
                 visorKeySnapshot = java.util.Set.copyOf(visors);
+                java.util.Set<Integer> blendedVisors = new java.util.HashSet<>();
+                for (MeshView v : views) {
+                    int k = (int) v.getProperties().get("material");
+                    if (k < 0 && Boolean.TRUE.equals(v.getProperties().get("singleJoint")) && (int) v.getProperties().get("tris") <= 400) {
+                        blendedVisors.add(k);
+                    }
+                }
+                blendedVisorSnapshot = java.util.Set.copyOf(blendedVisors);
                 Platform.runLater(() -> visorKeys.addAll(visors));
                 SkeletonLoader.Loaded skeleton = SkeletonLoader.load(entry, loaded.model(), library);
                 Platform.runLater(() -> {
@@ -586,13 +639,20 @@ public final class ModelPreview {
         if (vs.joints() == null || vs.weights() == null) {
             return false;
         }
-        int joint = (int) vs.joints()[min * 4];
+        int joint = -1;
         for (int v = min; v < min + n; v++) {
-            if (vs.weights()[v * 4] < 0.99f || (int) vs.joints()[v * 4] != joint) {
+            int found = -1;
+            for (int k = 0; k < 4; k++) {
+                if (vs.weights()[v * 4 + k] >= 0.99f) {
+                    found = (int) vs.joints()[v * 4 + k]; // the full weight can sit in any of the 4 slots
+                }
+            }
+            if (found < 0 || (joint >= 0 && found != joint)) {
                 return false;
             }
+            joint = found;
         }
-        return true;
+        return joint >= 0;
     }
 
     /**
@@ -779,12 +839,12 @@ public final class ModelPreview {
 
         // A soft headlight plus a key light from the upper left (both ride with the camera) so
         // normal-mapped detail reads; ambient fills the shadows.
-        PointLight headlight = new PointLight(Color.gray(0.45));
-        javafx.scene.DirectionalLight key = new javafx.scene.DirectionalLight(Color.gray(0.7));
+        PointLight headlight = new PointLight(Color.gray(0.35));
+        javafx.scene.DirectionalLight key = new javafx.scene.DirectionalLight(Color.gray(0.85));
         key.setDirection(new Point3D(0.45, 0.6, 0.65));
         rig.getChildren().setAll(camera, headlight, key);
         rig.getTransforms().setAll(target, yaw, pitch, dolly);
-        AmbientLight ambient = new AmbientLight(Color.gray(0.34));
+        AmbientLight ambient = new AmbientLight(Color.gray(0.24));
 
         floor = buildFloor(-mn[1]);
         floor.visibleProperty().bind(AppSettings.get().showFloorProperty());
@@ -829,6 +889,7 @@ public final class ModelPreview {
         }
         this.skeleton = skeleton;
         markLockjaw(skeleton);
+        freezeOtherRig(skeleton);
         followJoint = pickFollowJoint(skeleton.skeleton(), skeleton.skin() != null ? skeleton.skin().palette() : null);
         claimedAddresses.clear();
         for (int j = 0; j < skeleton.skeleton().joints().size(); j++) {
@@ -846,15 +907,55 @@ public final class ModelPreview {
     }
 
     /** Rebuilds the bones overlay for the given joint world matrices; returns the joints drawn. */
+    /** Overlay nodes, built once per skeleton: a ball per joint and a bone per (parent, joint). */
+    private final List<javafx.scene.shape.Sphere> boneBalls = new ArrayList<>();
+    private final List<int[]> boneLinks = new ArrayList<>();
+    private final List<javafx.scene.shape.Cylinder> boneSticks = new ArrayList<>();
+    private int[] ballJoints = new int[0];
+    /** The last posed joint matrices, so the overlay can catch up when it's switched on. */
+    private double[][] lastPosed;
+
+    /**
+     * The skeleton overlay. Nodes and materials are made on the first call and only moved after
+     * that -- rebuilding them every frame (with new materials and textures each time) is what made
+     * long animation sessions lag. While the overlay is hidden nothing is updated.
+     */
     private int drawBones(double[][] world) {
+        lastPosed = world;
         SkeletonLoader.Loaded skeleton = this.skeleton;
         int n = world.length;
-        Point3D[] at = new Point3D[n];
-        for (int j = 0; j < n; j++) {
-            double[] m = world[j];
-            // Same axis mapping as the mesh: (x, y, z) -> (x, -y, -z).
-            at[j] = m == null ? null : new Point3D(m[3], -m[7], -m[11]);
+        boolean fresh = boneBalls.isEmpty() && boneSticks.isEmpty();
+        if (fresh) {
+            buildBoneNodes(skeleton, world);
         }
+        if (!fresh && !bonesGroup.isVisible()) {
+            return boneBalls.size();
+        }
+        for (int i = 0; i < boneBalls.size(); i++) {
+            double[] m = world[ballJoints[i]];
+            javafx.scene.shape.Sphere ball = boneBalls.get(i);
+            ball.setVisible(m != null);
+            if (m != null) {
+                ball.setTranslateX(m[3]);
+                ball.setTranslateY(-m[7]);
+                ball.setTranslateZ(-m[11]);
+            }
+        }
+        for (int i = 0; i < boneSticks.size(); i++) {
+            int[] link = boneLinks.get(i);
+            double[] a = world[link[0]], b = world[link[1]];
+            javafx.scene.shape.Cylinder c = boneSticks.get(i);
+            if (a == null || b == null) {
+                c.setVisible(false);
+                continue;
+            }
+            placeBone(c, new Point3D(a[3], -a[7], -a[11]), new Point3D(b[3], -b[7], -b[11]));
+        }
+        return boneBalls.size();
+    }
+
+    private void buildBoneNodes(SkeletonLoader.Loaded skeleton, double[][] world) {
+        int n = world.length;
         PhongMaterial boneMat = new PhongMaterial(Color.BLACK);
         boneMat.setSpecularColor(Color.BLACK);
         boneMat.setSelfIlluminationMap(solid(BONE_COLOR));
@@ -869,34 +970,78 @@ public final class ModelPreview {
             }
         }
         List<Node> nodes = new ArrayList<>();
-        int drawn = 0;
+        List<Integer> joints = new ArrayList<>();
         for (int j = 0; j < n; j++) {
-            if (at[j] == null || (!used.isEmpty() && !used.contains(j))) {
+            if (world[j] == null || (!used.isEmpty() && !used.contains(j))) {
                 continue;
             }
             javafx.scene.shape.Sphere ball = new javafx.scene.shape.Sphere(r * 1.8, 8);
             ball.setMaterial(jointMat);
-            ball.setTranslateX(at[j].getX());
-            ball.setTranslateY(at[j].getY());
-            ball.setTranslateZ(at[j].getZ());
             ball.getProperties().put("joint", skeleton.skeleton().joints().get(j));
+            boneBalls.add(ball);
+            joints.add(j);
             nodes.add(ball);
-            drawn++;
             int p = skeleton.skeleton().parentOf(j);
-            if (p >= 0 && p < n && at[p] != null && (used.isEmpty() || used.contains(p))) {
-                Node bone = boneBetween(at[p], at[j], r, boneMat);
-                if (bone != null) {
-                    nodes.add(bone);
-                }
+            if (p >= 0 && p < n && world[p] != null && (used.isEmpty() || used.contains(p))) {
+                javafx.scene.shape.Cylinder c = new javafx.scene.shape.Cylinder(r, 1, 6);
+                c.setMaterial(boneMat);
+                boneSticks.add(c);
+                boneLinks.add(new int[] {p, j});
+                nodes.add(c);
             }
         }
+        ballJoints = joints.stream().mapToInt(Integer::intValue).toArray();
         bonesGroup.getChildren().setAll(nodes);
-        return drawn;
+    }
+
+    /** A unit-height cylinder stretched and turned to run from a to b. */
+    private static void placeBone(javafx.scene.shape.Cylinder c, Point3D a, Point3D b) {
+        Point3D diff = b.subtract(a);
+        double len = diff.magnitude();
+        if (len < 1e-9) {
+            c.setVisible(false);
+            return;
+        }
+        c.setVisible(true);
+        Point3D mid = a.midpoint(b);
+        Point3D axis = Rotate.Y_AXIS.crossProduct(diff);
+        double angle = Math.toDegrees(Math.acos(Math.max(-1, Math.min(1, diff.normalize().dotProduct(Rotate.Y_AXIS)))));
+        javafx.scene.transform.Transform turn = axis.magnitude() > 1e-9 ? new Rotate(angle, axis)
+            : diff.getY() < 0 ? new Rotate(180, Rotate.X_AXIS) : new Rotate(0);
+        // The stretch goes last in the list (innermost): the scaleY property would apply in world space.
+        c.getTransforms().setAll(new Translate(mid.getX(), mid.getY(), mid.getZ()), turn, new javafx.scene.transform.Scale(1, len, 1));
     }
 
     // ---- posing ----------------------------------------------------------------
 
     /** Base vertex data of a skinned submesh (model space, before the axis flip). */
+    /**
+     * The player rig carries two skeletons in one: the first-person arms (fps_* joints) and the
+     * third-person body, whose spine hangs from fps_main_bind. Clips drive both, and the
+     * first-person joints carry camera-relative offsets (a crouch of about 0.17 in third-person
+     * idles) that would slide the third-person torso off its hips. When the model's skin uses none
+     * of the fps_* joints, those joints keep their bind pose.
+     */
+    private final java.util.Set<Integer> frozenAddresses = new java.util.HashSet<>();
+
+    private void freezeOtherRig(SkeletonLoader.Loaded sk) {
+        frozenAddresses.clear();
+        if (sk.skin() == null) {
+            return;
+        }
+        List<String> names = sk.skeleton().joints();
+        for (int j : sk.skin().palette()) {
+            if (j < names.size() && names.get(j).startsWith("fps_")) {
+                return; // a first-person model
+            }
+        }
+        for (int j = 0; j < names.size(); j++) {
+            if (names.get(j).startsWith("fps_") && sk.skeleton().poseAddress(j) >= 0) {
+                frozenAddresses.add(sk.skeleton().poseAddress(j));
+            }
+        }
+    }
+
     /** Sylux's Lockjaw: submeshes mostly weighted to lockjaw_* joints get the Lockjaw toggle. */
     private void markLockjaw(SkeletonLoader.Loaded sk) {
         if (sk.skin() == null) {
@@ -934,6 +1079,12 @@ public final class ModelPreview {
         if (skeleton == null || bindChain == null) {
             return;
         }
+        float frame = (float) frameSlider.getValue();
+        if (anim != null && anim == posedAnim && frame == posedFrame) {
+            return; // the timeline and the slider listener can both ask for the same frame
+        }
+        posedAnim = anim;
+        posedFrame = frame;
         double[][] chain = anim == null ? bindChain
             : chainWorld(remapped(anim.sample((float) frameSlider.getValue(), null)));
         int n = chain.length;
@@ -958,11 +1109,15 @@ public final class ModelPreview {
         followModel(posed);
     }
 
-    private static void skin(SkinnedMesh sm, double[][] delta, int[] palette) {
+    /** Per-mesh output buffers, reused every frame (allocating them per frame churned the GC). */
+    private final Map<SkinnedMesh, float[][]> skinBuffers = new java.util.IdentityHashMap<>();
+
+    private void skin(SkinnedMesh sm, double[][] delta, int[] palette) {
         float[] pos = sm.positions(), nrm = sm.normals();
         int count = pos.length / 3;
-        float[] out = new float[count * 3];
-        float[] nout = nrm != null ? new float[count * 3] : null;
+        float[][] buf = skinBuffers.computeIfAbsent(sm, k -> new float[][] {new float[count * 3], nrm != null ? new float[count * 3] : null});
+        float[] out = buf[0];
+        float[] nout = buf[1];
         for (int v = 0; v < count; v++) {
             double x = pos[v * 3], y = pos[v * 3 + 1], z = pos[v * 3 + 2];
             double ix = 0, iy = 0, iz = 0;
@@ -1164,6 +1319,9 @@ public final class ModelPreview {
     }
 
     /** A thin cylinder from {@code a} to {@code b} (JavaFX cylinders run along Y, centred). */
+    private AnimClip.Player posedAnim;
+    private float posedFrame = Float.NaN;
+
     private static Node boneBetween(Point3D a, Point3D b, double r, PhongMaterial mat) {
         Point3D diff = b.subtract(a);
         double len = diff.magnitude();
@@ -1202,7 +1360,9 @@ public final class ModelPreview {
             // Blended submeshes: alpha is opacity (visor setting). Opaque ones keep it only when it's a
             // cut-out (eyelashes on the face texture) -- otherwise it's a glow mask.
             boolean cutout = key >= 0 && base != null && isCutout(base);
-            boolean keepAlpha = key < 0 ? AppSettings.get().transparentVisorProperty().get() : cutout;
+            // Blended visors follow Settings > Transparent visor; other blended meshes (holograms,
+            // icon cards, glass) always keep their transparency.
+            boolean keepAlpha = key < 0 ? !blendedVisorSnapshot.contains(key) || AppSettings.get().transparentVisorProperty().get() : cutout;
             if (cutout) {
                 Platform.runLater(() -> drawCutoutsAfterOpaque(key));
             }
@@ -1228,6 +1388,21 @@ public final class ModelPreview {
             Image[] glow = ican == null || base == null ? null
                 : cachedFrames(byFrames, base.asset().assetId() + ":g:" + ican.asset().assetId() + (blended ? ":b" : ""),
                     () -> decodeGlowMap(base, ican, blended, MAX_TEXTURE_SIZE));
+            boolean holo = isHologram(loaded, mat);
+            Image[] holoImages = holo ? cachedFrames(byFrames, "holo:" + mat + ":" + loaded.model().materials().get(mat).materialInstance(),
+                () -> decodeHologram(base, loaded.slot(mat, "TCH0"), ican, MAX_TEXTURE_SIZE)) : null;
+            if (holoImages != null) {
+                Image[] hi = holoImages;
+                Platform.runLater(() -> {
+                    hologramKeys.add(key);
+                    textures.put(key, hi[0]);
+                    metalTextures.remove(key);
+                    specularMaps.remove(key);
+                    glowMaps.put(key, new Image[] {hi[1]});
+                    applyTextures();
+                });
+                continue;
+            }
             Platform.runLater(() -> {
                 if (diffuse != null) textures.put(key, diffuse);
                 if (metalDiffuse != null) metalTextures.put(key, metalDiffuse);
@@ -1239,8 +1414,65 @@ public final class ModelPreview {
         }
     }
 
+    /** Hologram materials (see {@link #isHologram}): drawn translucent and glowing, no lighting. */
+    private final java.util.Set<Integer> hologramKeys = new java.util.HashSet<>();
+    private static final java.util.Set<java.util.UUID> HOLOGRAM_SHADERS = java.util.Set.of(
+        java.util.UUID.fromString("ef1043d8-7a6e-4050-b95e-92439601049d"));  // holo tables, trooper holograms
+
+    /** The hologram shader (map tables, trooper / creature holograms), or a material with only a glow strip. */
+    static boolean isHologram(ModelLoader.LoadedModel loaded, int mat) {
+        if (mat >= loaded.model().materials().size()) {
+            return false;
+        }
+        return HOLOGRAM_SHADERS.contains(loaded.model().materials().get(mat).shader())
+            || (loaded.slot(mat, "BCLR") == null && loaded.slot(mat, "ICAN") != null);
+    }
+
+    /**
+     * {diffuse, glow} for a hologram: the diffuse is black with the base colour's alpha as opacity
+     * (holograms don't reflect light), the glow is the base colour tinted by the TCH0 colour strip
+     * (or, without a base, the ICAN strip's average colour).
+     */
+    static Image[] decodeHologram(PakAssetRef base, PakAssetRef strip, PakAssetRef ican, int maxSize) throws java.io.IOException {
+        int tint = 0xFFFFFF;
+        PakAssetRef tintRef = strip != null ? strip : ican;
+        if (tintRef != null) {
+            int[] t = decodeRaw(tintRef, 256).argb();
+            long r = 0, g = 0, b = 0;
+            for (int p : t) {
+                r += (p >> 16) & 0xFF;
+                g += (p >> 8) & 0xFF;
+                b += p & 0xFF;
+            }
+            int n = t.length;
+            double max = Math.max(1, Math.max(r, Math.max(g, b)) / (double) n);
+            // Normalised so the brightest channel is full: a hue, not a dimmer.
+            tint = (int) (r / n * 255 / max) << 16 | (int) (g / n * 255 / max) << 8 | (int) (b / n * 255 / max);
+        }
+        int tr = (tint >> 16) & 0xFF, tg = (tint >> 8) & 0xFF, tb = tint & 0xFF;
+        if (base == null) {
+            // Strip-only holograms (the CSI emblem): half see-through, glowing at half strength.
+            int[] diffuse = {0x70000000};
+            int[] glow = {0xFF000000 | (tr / 2) << 16 | (tg / 2) << 8 | tb / 2};
+            return new Image[] {toImageRaw(1, 1, diffuse), toImageRaw(1, 1, glow)};
+        }
+        TextureDecoder.Image img = decodeRaw(base, maxSize);
+        int[] px = img.argb();
+        int[] diffuse = new int[px.length], glow = new int[px.length];
+        for (int i = 0; i < px.length; i++) {
+            int c = px[i], a = c >>> 24;
+            double lum = (((c >> 16) & 0xFF) * 0.3 + ((c >> 8) & 0xFF) * 0.59 + (c & 0xFF) * 0.11) / 255.0;
+            double k = Math.min(1, 0.35 + lum) * (0.4 + 0.6 * a / 255.0);
+            diffuse[i] = Math.min(255, a + 40) << 24;
+            glow[i] = 0xFF000000 | (int) (tr * k) << 16 | (int) (tg * k) << 8 | (int) (tb * k);
+        }
+        return new Image[] {toImage(img.width(), img.height(), diffuse), toImage(img.width(), img.height(), glow)};
+    }
+
     /** Visor keys are filled on the FX thread right after the meshes are built (before textures load). */
     private volatile java.util.Set<Integer> visorKeySnapshot = java.util.Set.of();
+    /** Blended submeshes that look like visors (small, bound to one joint): the only ones the setting makes opaque. */
+    private volatile java.util.Set<Integer> blendedVisorSnapshot = java.util.Set.of();
 
     private boolean isVisorKey(int key) {
         return visorKeySnapshot.contains(key);
@@ -1300,6 +1532,9 @@ public final class ModelPreview {
     private static final int SMOOTH_SIZE = 1024;
 
     private static Image toImage(int w, int h, int[] argb) {
+        if (AppSettings.get().smoothTexturesProperty().get() && Math.max(w, h) <= 2048) {
+            return toImageRaw(w * 2, h * 2, smoothUpscale(w, h, argb));
+        }
         int f = 1;
         while (Math.max(w, h) * f < SMOOTH_SIZE && (long) w * h * f * f * 4 <= 2048L * 2048) {
             f *= 2;
@@ -1318,6 +1553,75 @@ public final class ModelPreview {
         return toImageRaw(w, h, argb);
     }
 
+    /**
+     * Settings > Extra smooth textures: 2x upscale with Catmull-Rom (bicubic) interpolation, then
+     * a light [1 2 1] blur. The game's textures have hard 1-2 texel seams (normal-map panel lines);
+     * JavaFX magnifies them bilinearly, which shows their stair steps up close. This rounds them
+     * off at 4x the memory per texture.
+     */
+    static int[] smoothUpscale(int w, int h, int[] src) {
+        int W = w * 2, H = h * 2;
+        int[] up = new int[W * H];
+        double[] wx = new double[4], wy = new double[4];
+        for (int y = 0; y < H; y++) {
+            double fy = (y + 0.5) / 2 - 0.5;
+            int y0 = (int) Math.floor(fy);
+            cubicWeights(fy - y0, wy);
+            for (int x = 0; x < W; x++) {
+                double fx = (x + 0.5) / 2 - 0.5;
+                int x0 = (int) Math.floor(fx);
+                cubicWeights(fx - x0, wx);
+                double a = 0, r = 0, g = 0, b = 0;
+                for (int j = 0; j < 4; j++) {
+                    int yy = Math.max(0, Math.min(h - 1, y0 - 1 + j));
+                    for (int i = 0; i < 4; i++) {
+                        int xx = Math.max(0, Math.min(w - 1, x0 - 1 + i));
+                        int p = src[yy * w + xx];
+                        double k = wx[i] * wy[j];
+                        a += (p >>> 24) * k;
+                        r += ((p >> 16) & 0xFF) * k;
+                        g += ((p >> 8) & 0xFF) * k;
+                        b += (p & 0xFF) * k;
+                    }
+                }
+                up[y * W + x] = clamp8(a) << 24 | clamp8(r) << 16 | clamp8(g) << 8 | clamp8(b);
+            }
+        }
+        // [1 2 1] x [1 2 1] / 16
+        int[] out = new int[W * H];
+        for (int y = 0; y < H; y++) {
+            for (int x = 0; x < W; x++) {
+                int a = 0, r = 0, g = 0, b = 0;
+                for (int j = -1; j <= 1; j++) {
+                    int yy = Math.max(0, Math.min(H - 1, y + j));
+                    for (int i = -1; i <= 1; i++) {
+                        int xx = Math.max(0, Math.min(W - 1, x + i));
+                        int k = (i == 0 ? 2 : 1) * (j == 0 ? 2 : 1);
+                        int p = up[yy * W + xx];
+                        a += (p >>> 24) * k;
+                        r += ((p >> 16) & 0xFF) * k;
+                        g += ((p >> 8) & 0xFF) * k;
+                        b += (p & 0xFF) * k;
+                    }
+                }
+                out[y * W + x] = (a / 16) << 24 | (r / 16) << 16 | (g / 16) << 8 | b / 16;
+            }
+        }
+        return out;
+    }
+
+    private static void cubicWeights(double t, double[] w) {
+        double t2 = t * t, t3 = t2 * t;
+        w[0] = 0.5 * (-t3 + 2 * t2 - t);
+        w[1] = 0.5 * (3 * t3 - 5 * t2 + 2);
+        w[2] = 0.5 * (-3 * t3 + 4 * t2 + t);
+        w[3] = 0.5 * (t3 - t2);
+    }
+
+    private static int clamp8(double v) {
+        return (int) Math.max(0, Math.min(255, Math.round(v)));
+    }
+
     private static Image toImageRaw(int w, int h, int[] argb) {
         WritableImage out = new WritableImage(w, h);
         out.getPixelWriter().setPixels(0, 0, w, h, PixelFormat.getIntArgbInstance(), argb, 0, w);
@@ -1330,6 +1634,8 @@ public final class ModelPreview {
      * arm cannon its blotchy, z-fight-like shading. The preview flips texture V, which mirrors the
      * bitangent, so Y is inverted; two-channel maps get Z rebuilt.
      */
+    private static final double NORMAL_STRENGTH = 1.0;
+
     static Image decodeNormalMap(PakAssetRef ref, int maxSize) throws java.io.IOException {
         TextureDecoder.Image img = decodeRaw(ref, maxSize);
         int[] px = img.argb();
@@ -1339,10 +1645,25 @@ public final class ModelPreview {
             int r = (px[i] >> 16) & 0xFF;
             int g = 255 - (xInRgbYInAlpha ? px[i] >>> 24 : (px[i] >> 8) & 0xFF);
             int b = xInRgbYInAlpha ? 0 : px[i] & 0xFF;
+            double x = r / 127.5 - 1, y = g / 127.5 - 1, z;
             if (b < 16) {
-                double x = r / 127.5 - 1, y = g / 127.5 - 1;
-                b = (int) Math.round((Math.sqrt(Math.max(0, 1 - x * x - y * y)) * 0.5 + 0.5) * 255);
+                z = Math.sqrt(Math.max(0, 1 - x * x - y * y));
+            } else {
+                z = b / 127.5 - 1;
             }
+            // Strengthened: JavaFX's simple lighting (no shadows, reflections or ambient occlusion)
+            // flattens the panel grooves the game's lighting brings out.
+            x *= NORMAL_STRENGTH;
+            y *= NORMAL_STRENGTH;
+            double len = Math.sqrt(x * x + y * y + z * z);
+            if (len > 1e-6) {
+                x /= len;
+                y /= len;
+                z /= len;
+            }
+            r = (int) Math.round((x * 0.5 + 0.5) * 255);
+            g = (int) Math.round((y * 0.5 + 0.5) * 255);
+            b = (int) Math.round((z * 0.5 + 0.5) * 255);
             out[i] = 0xFF000000 | r << 16 | g << 8 | b;
         }
         return toImage(img.width(), img.height(), out);
@@ -1647,6 +1968,17 @@ public final class ModelPreview {
         // Animated frames are kept smaller: GLOW_FRAMES full-size images would be too much memory.
         TextureDecoder.Image mask = decodeRaw(base, animated ? Math.min(512, maxSize) : maxSize);
         int[] px = mask.argb();
+        // A base colour that is opaque (almost) everywhere has no glow mask in its alpha -- looking
+        // the table up at alpha 255 lit whole bodies (the senior troopers glowed pale yellow).
+        int masked = 0;
+        for (int i = 0; i < px.length; i += 7) {
+            if ((px[i] >>> 24) < 200) {
+                masked++;
+            }
+        }
+        if (masked < px.length / 7 / 50) {
+            return null;
+        }
         int[] column = dominantColumns(mask, lw);
         int frames = animated ? GLOW_FRAMES : 1;
         Image[] out = new Image[frames];
@@ -1811,6 +2143,13 @@ public final class ModelPreview {
             if (seeThrough && visorKeys.contains(idx)) {
                 color = color.deriveColor(0, 1, 1, 0.45); // opaque visors have no opacity of their own
             }
+            if (hologramKeys.contains(idx)) {
+                mat.setDiffuseColor(Color.WHITE);
+                mat.setBumpMap(null);
+                mat.setSpecularMap(null);
+                mat.setSpecularColor(Color.BLACK);
+                return;
+            }
             if (iceKeys.contains(idx)) {
                 color = color.deriveColor(0, 1, 1, AppSettings.get().cannonFrostProperty().get() / 100.0);
             }
@@ -1819,7 +2158,7 @@ public final class ModelPreview {
             Image spec = detail ? specularMaps.get(idx) : null;
             mat.setSpecularMap(spec);
             mat.setSpecularColor(spec != null ? Color.WHITE : Color.gray(0.25));
-            mat.setSpecularPower(spec != null ? 48 : 24);
+            mat.setSpecularPower(spec != null ? 64 : 24);
         });
         applyGlow();
     }

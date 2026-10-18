@@ -93,6 +93,8 @@ Most of the formats are packed binary with no labels, so the method was usually:
 
 5. CHARACTERS (CHPR): SKELETONS
 
+(The full byte-level reference, including the newer findings below, is docs/CHPR-format.txt.)
+
 A CHPR bundles skeleton, skins, animation clips and events, in a packed body with no aligned field table.
 Each part is found by a signature:
 
@@ -169,6 +171,18 @@ bind poses exactly.
 - The menu sounds Mocktroid now uses for its own interface were found by the user listening through the
   Sounds tab and renaming them.
 
+
+8b. CHARACTER EVENTS (added 2026-10-17)
+
+- A CHPR's full node list holds not just joints but every event channel: ParticleSignal / ParticleState,
+  SoundSignal / SoundState, ScriptSignal / ScriptState, RumbleSignal, UserState, plus "Skin" and
+  "SubCharacter". A typed output list gives each slot one value type: joint transforms, one-shot signals,
+  on/off states, and selectors (likely skin / sub-character switching). The counts match exactly (the
+  cinematic gun's 9 ParticleState and 18 ParticleSignal names fill 9 and 18 rows of two slots).
+- The assets those events fire are listed as reversed FourCC + GUID entries (PNEG = GENP particles,
+  CAUD sounds, SWSH trails, ELC2 electricity), followed by a packed block of event objects with unique
+  32-bit ids. How each object names its channel, clip and frame is the next thing to decode -- it is
+  what a cinematic viewer needs for sounds and particles.
 
 9. THINGS STILL UNKNOWN
 

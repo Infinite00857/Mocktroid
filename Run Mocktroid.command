@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Builds (if needed) and launches Mocktroid on macOS (double-click this file in Finder).
-# Needs: a JDK 21+ and Maven -- with Homebrew: 'brew install openjdk@21 maven'.
+# Needs: a JDK 21+ ('brew install openjdk@21'). Maven is optional: without it the bundled wrapper downloads it.
 # Optional: 'brew install vgmstream ffmpeg' for sound previews, WebM videos and extra export formats.
 set -e
 cd "$(dirname "$0")"
@@ -18,11 +18,9 @@ if [ -n "$JAVA_HOME" ]; then
     export PATH="$JAVA_HOME/bin:$PATH"
 fi
 
-MVN="${MVN:-mvn}"
-if ! command -v "$MVN" >/dev/null 2>&1; then
-    echo "Maven not found. Install it with 'brew install maven'."
-    read -r -p "Press Enter to close."
-    exit 1
+# An installed Maven, else the bundled wrapper (downloads Maven once).
+if [ -z "$MVN" ]; then
+    if command -v mvn >/dev/null 2>&1; then MVN=mvn; else MVN="$PWD/source/mvnw"; chmod +x "$MVN" 2>/dev/null || true; fi
 fi
 
 "$MVN" -q -f "source/pom.xml" compile javafx:run || read -r -p "Mocktroid exited with an error. Press Enter to close."

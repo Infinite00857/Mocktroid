@@ -1,0 +1,201 @@
+CHPR (CHARACTER PROJECT) FORMAT - WHAT IS KNOWN
+
+Last updated 2026-10-17. Plain text. This is the detailed reference behind section 5 and 6 of
+Explanation.txt. "Verified" means checked against many files (numbers given); "likely" means the evidence
+fits but it isn't proven; "unknown" is unknown.
+
+Files examined in detail: samus_cinematic_gun 45833731 (62 KB, 6 clips), Sylux 91605ed3 (1.5 MB) and
+8a7fecc9 (14 MB, 466 clips), the player rig f1ed30ec (1.3 MB, 294 joints), the animation-only player file
+7238eaad (about 500 clips). A byte-coverage tool (scratchpad ChprMap) labels every byte it can explain:
+known structures cover 82% of the cinematic gun file, 95% of Sylux 91605ed3 and 85% of the player rig;
+the rest is listed under "Unknown" at the end.
+
+Conventions: little-endian. The body is a packed serialization: many records are not 4-byte aligned, so
+almost everything is found by signature scans rather than fixed offsets. A "pose address" is
+slot | row << 6 (a 16-bit value); see "Output addresses".
+
+
+1. FILE HEADER
+
+  0x00  "RFRM", size 0 (custom body), then the form type "CHPR" at 0x14, versions 0xA1 / 0xA1, and the
+        body size twice (verified on every CHPR).
+  0x2C  zero or more (u32 index, u32 offset, u32 size) triples. Small projects: one per side blob (each
+        blob is a clip -- the cinematic gun has 6 triples for 6 clips). Large projects: ~1 MB body
+        segments (Sylux 91605ed3 has 29).
+  then  u32 string table size, NUL-separated strings. The first string is "Primary", then the skin
+        names in the same order the file references its SMDL models (Samus: default, psychic,
+        psychic_glove, violasuit, ...), then skin-set names (Base, Hologram / Base, Stage1, Stage2, Cine),
+        then everything else (joint names, event names, clip names).
+
+
+2. NAME LISTS (verified)
+
+Right after the strings (single-segment files):
+
+  u16 1, u16 4 (number of name lists), u32 total name count (= strings - 1), u32 count of each list,
+  then the total again, then each list as: u32 count, u32 FNV-1a hashes[count], u32 string indices[count].
+
+The four lists:
+  A  joints of the deforming skeleton (starts root.anchorBlend, cinematic_root.anchorBlend, then joints).
+  B  every node: A plus the extra roots (root, cinematic_root, Skeleton_Root), "Skin", "SubCharacter",
+     and all event channels (ParticleSignal.*, SoundState.*, ...). The skeleton reader uses this one.
+  C  rig parameters (HeadAim.enable, AimTarget.useCamera, AimTarget, SamusIK.enable, BoneSet_*.enable).
+  D  clip names -- of every clip in the character family, not only the ones stored in this file (Sylux
+     91605ed3 stores 28 clips but lists 786 names).
+
+Counts seen: gun 112 / 135 / 0 / 70, player rig 396 / 774 / 19 / 1670, Sylux 201 / 503 / 4 / 786.
+
+
+3. NODE TABLE (verified, from mp4x)
+
+One 4-byte record per list-B entry: u16 (field offset << 7 | bank), u8 kind, u8 flags.
+  kind 0x62 = joint, 0x60 / 0x61 = channel (events, parameters).
+  Joint index = 170 * bank + offset / 3 (joints take 3 fields, banks of 170).
+  Flag bytes seen: mostly 00; 04 10 18 20 28 on the root nodes, 40 on some channels (Sylux).
+A two-record table of the same shape (kinds 0x62, flags 10 / 20) sits just before the hierarchy.
+
+
+4. HIERARCHY (verified, with corrections to mp4x)
+
+  03 bank parentBank        selects the banks for the following records
+  04 u16 self*6 u16 parent*6 u16 c
+  05 u16 self*6 u16 parent*6 u16 c
+  07 u16 self*6 u16 parent*6 u16 c u16 extra
+Other record kinds (for example 0x0D) can interrupt a run; parsing resumes at the next record that
+continues the numbering.
+
+c is the joint's pose address -- exactly the address animation clips write the joint's transform to
+(cinematic gun: 96 of 98 joint outputs of a clip are hierarchy addresses; player rig: 93 of 93).
+
+Local bind transform of a joint:
+  type 04: the transform table is stored SLOT BY SLOT. Row = (rows in all lower slots) + (c >> 6) / 5.
+           mp4x's (c >> 6) / 5 is the one-slot special case and breaks multi-slot rigs.
+  type 05 / 07: c / 7.
+Because some rows belong to records that aren't parsed, each slot's start is calibrated: for skinned
+joints whose parent is skinned, inverse(parent world) * own world (from the inverse bind matrices) is the
+exact local transform, and the table row matching it votes for that slot's start. Slots with no skinned
+joint are checked as a whole: every "guessed rows / identity" combination over the slots that sit above
+skinned joints is scored by how well it rebuilds the skinned bind poses. The player rig's root and
+arm-base slot (27) has no rows -- identity. Results: Sylux 78/80 exact, Samus 54/58, player rig 105/108,
+cinematic gun 50/50 (the misses are ties between identical rows).
+
+
+4b. HIERARCHY GOTCHAS (verified 2026-10-17)
+
+- Type 05 records' last field is a transform index * 7 (values 7, 14, 21 ... 987 = 7 * 141), NOT a pose
+  address. Read as an address it collided with real joints (player rig: fps_meta_L0_0 on the cannon's
+  27/15, meta_L0_0 on spine_01's 21/0). Their true pose addresses are unknown: clips write a few
+  addresses no joint claims (player rig 1/0, 26/0, 14/5, 28/0, 28/400, 28/405, 33/80/85/90, 34/45), and
+  "next free row of the parent's slot" matches eight of them by position -- but 14/5 holds an aim/grip
+  style transform (translation ~1 unit), not a finger root, so that rule is wrong. Mocktroid keeps
+  type 05 joints at their bind pose.
+- The first palette entry's bank is the high bits of the 16 bits before the palette (bit 87 after the
+  count byte).
+
+- Record kind 0x0D (not decoded) can appear inside a run and change the parent bank for the records
+  after it: in the player rig, spine_01's parent field 2 means bank 1 (fps_main_bind, at hip height),
+  not bank 0 (Skeleton_Root). Mocktroid resolves such joints by testing each bank's same-index joint
+  against the skinned bind poses.
+- Some slots have no rows of their own (the first-person root joints are identity), and the third-person
+  body's waist in the player rig is fps_main_bind (rows 149-154 of slot 27 = root identity, arm base R
+  identity, fps_main_bind (0, 1.95, 0), spine end (0, 0.30, 0.06), neck (0, 0.31, -0.03), arm base L).
+
+5. TRANSFORM TABLE (verified)
+
+float32 records (qw, qx, qy, qz, tx, ty, tz), found as the longest run of unit quaternions. Large rigs
+continue the table after a short break (4 bytes in the player rig) -- runs starting within one record of
+the previous end belong to it. Several short extra runs exist elsewhere in big files (8-43 records);
+their purpose is unknown (other skin sets / sub-characters are the likely candidates).
+
+
+6. REST VALUES (likely)
+
+Right after the transform table: a small descriptor (for example 46 00 08 00 .. 40 02 04 00 .. 04 00 50 0f)
+followed by 10-float records (qw qx qy qz, sx sy sz, tx ty tz) -- in the cinematic gun about 110 records,
+nearly all identity (1,0,0,0, 1,1,1, 0,0,0). Same layout as a clip's joint output, so most likely the
+default value of every output when no clip drives it.
+
+
+7. OUTPUT ADDRESS LIST (verified layout, likely meaning)
+
+After the node table: 4-byte records u16 address, u8 type, u8 flags, grouped by slot, ending in a run of
+FF bytes. Every slot holds one type, so the slot number of an address tells what kind of value lives
+there. Cinematic gun:
+  slot 2  type 0x65  9 rows    -- it has 9 ParticleState.* channels
+  slot 3  type 0x66  2 rows    -- "Skin" and "SubCharacter" (model / skin switching), flags E0
+  slot 4  type 0x60  18 rows   -- it has 18 ParticleSignal.* channels
+Player rig: slot 1 type 0x62 (joints, flags 00 / 40), slot 7 type 0x65 x105, slot 9 type 0x66 (flags E0 /
+60 / 40), slot 10 type 0x61 x110, slot 11 type 0x60 x195.
+So: 0x62 joint transform, 0x60 one-shot "Signal" channel, 0x65 on/off "State" channel, 0x61 another
+channel kind (parameters?), 0x66 selector (skin / sub-character). Joints use other slots than channels.
+
+
+8. SKINS (verified, from mp4x)
+
+  01, u8 joint count, 00, u8, u8, u8, 00 00, u8, 00 00 00, ...
+  16-bit palette entries start 103 bits after the count byte: low 9 bits = joint field offset, high bits =
+  the bank of the NEXT entry. Then count + 1 inverse bind matrices (3x4 float32, row-major).
+Big rigs have one skin per model family (the player rig: 117, 66, 52 and 3 matrices).
+
+
+9. MODEL BINDINGS (layout verified, fields partly)
+
+One record per referenced SMDL (one per skin name), roughly:
+  01, u8 number (1..n), u32, u32 mask (0, 2, 4, ...), FF FF FF FF, u32 0, u16 skin index, u16 1,
+  16-byte id (not an asset), "LDMS" (the FourCC "SMDL" stored reversed), 16-byte SMDL GUID.
+The second id is the same kind of 16-byte id; it isn't any asset in the romfs (an instance id).
+
+
+10. CONSTANT POOLS (verified)
+
+  01 00 00 00 00 01 <n> 00 00 00, then n pools of (u16 index, u16 count, float32[count]).
+Each pool starts 1, 0, 0, 0 (identity rotation / zero vector). Clips refer to values they hold for their
+whole length by an index into the pool their stream names. Found unaligned (2-byte offsets).
+Sizes: gun 632 floats, Sylux 9852, player rig 12330 + 10420.
+
+
+11. ANIMATION CLIPS (verified)
+
+Clip list record (0x23 bytes): u16 0, u16 clip index, 00 00 00, 01 01, u32 name (string index),
+FF FF FF FF, ..., f32 1.0 at +0x1D, u16 frame count at +0x21.
+Clip payload: after "01 01 <u32 clip id> FF FF FF FF": u32 size, u16 0x20, u16 descriptor offset, u32
+bitstream offset, f32 rate (1.0), u16 frames, 48-bit output slot mask, u16 decoded size; then the stream
+table, descriptor bytecode, key bitstreams and sampling bytecode (decoded in AnimClip.java -- see
+Explanation.txt section 6). Payload id = clip index + a per-file offset (matched by frame counts).
+Sampling ops: 2 = joint transform with scale (10 floats, address step 5), 3 = transform without scale
+(7 floats, step 7), 6 = floats, 7 = ints, 4 / 5 = skips. Joint outputs go to hierarchy addresses; one op-3
+output per clip in another slot is the whole-body root motion. Playback rate: 60 fps.
+Clips may live in another CHPR than the skeleton: 7238eaad holds the player's clips and has no skeleton
+(its addresses match the player rig f1ed30ec).
+
+
+12. EVENTS (partly)
+
+Event names are channels in list B, in families:
+  ParticleSignal / ParticleState, SoundSignal / SoundState, ScriptSignal / ScriptState, RumbleSignal,
+  UserState  (Sylux: 98 / 42 particle, 79 / 11 sound, 50 / 28 script, 24 rumble, 20 user).
+"Signal" = a one-shot at a frame, "State" = on/off over a span (likely, from the names and the 0x60 /
+0x65 channel types). The assets they trigger are listed as FourCC + GUID dependency entries: "PNEG" =
+GENP (particle systems), CAUD (sound events), SWSH (swooshes / trails), ELC2 (electric effects).
+Right after those lists comes a packed block of event objects (cinematic gun: 28 objects in 2.4 KB, Sylux
+36 KB, player 105 KB) with recurring patterns (05 00 96 0B 00, 01 01 / 01 02 markers) and one unique
+32-bit id per object followed by FF FF FF FF. The ids are not hashes of any string in the file and occur
+only once (instance ids). How an object names its channel, clip and frame is not decoded yet.
+
+
+13. UNKNOWN
+
+- The ~0.5-1.6 KB packed block right after list D (starts 05 01 00 01 02 03 06 00 01 02 03 FF FF ...):
+  probably the skin-set / sub-character table (it has small index runs 0..3).
+- The bodies of the event objects (section 12).
+- The 0x0D and other interrupting hierarchy record kinds.
+- The short extra transform runs in big files (section 5).
+- The descriptor in front of the rest values (section 6).
+- What the record type 07's extra u16 means.
+
+
+HOW TO REPRODUCE
+
+source/tools/chpr has ChprMap (byte coverage + gap listing) and ChprTables (clip outputs vs hierarchy /
+output list); its README.txt explains how to run them. Other statistics (bind locals vs inverse binds,
+constant pools, posing) came from throwaway tools built the same way against the app's classes.

@@ -13,3 +13,6 @@
 *.mp4 binary
 *.ico binary
 *.icns binary
+
+# Maven wrapper script (no extension) must keep LF to run on macOS/Linux
+mvnw text eol=lf

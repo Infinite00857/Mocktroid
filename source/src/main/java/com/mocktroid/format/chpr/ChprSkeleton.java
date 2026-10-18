@@ -31,7 +31,8 @@ import com.mocktroid.format.LE;
  *   <li><b>Transforms</b>: float32 (qw, qx, qy, qz, tx, ty, tz) records.</li>
  *   <li><b>Skins</b>: {@code 01, u8 count, 00, ...}; 16-bit palette entries
  *       103 bits after the count (low 9 bits joint field offset, high bits the
- *       next entry's bank), then count + 1 row-major 3x4 inverse bind matrices.</li>
+ *       next entry's bank; the first entry's bank is the high bits of the 16 bits
+ *       before), then count + 1 row-major 3x4 inverse bind matrices.</li>
  * </ul>
  * Matrices are row-major {@code double[16]}.
  */
@@ -64,9 +65,12 @@ public final class ChprSkeleton {
         }
         s.readNames();
         s.readHierarchy();
+        s.assignType5Addresses();
         s.readTransforms();
         s.readSkins();
         s.assignLocalIndices();
+        s.solveRig();
+        s.fixLocalsFromSkins();
         return s;
     }
 
@@ -222,6 +226,7 @@ public final class ChprSkeleton {
                 }
                 sb = d[q + 1] & 0xFF;
                 pb = d[q + 2] & 0xFF;
+                bankUncertain = false;
                 q += 3;
                 continue;
             }
@@ -239,6 +244,8 @@ public final class ChprSkeleton {
                 if (hit < 0) {
                     break;
                 }
+                // The skipped bytes may have changed the parent bank (0x0D records do).
+                bankUncertain = true;
                 next = LE.u16(d, hit + 1) / 6;
             }
             q = hit;
@@ -247,13 +254,23 @@ public final class ChprSkeleton {
             int j = BANK * sb + a / 6;
             if (b % 6 == 0) {
                 parent.put(j, BANK * pb + b / 6);
+                if (bankUncertain) {
+                    parentField.put(j, b / 6);
+                }
             }
             if (type == 4) {
                 slotRows.put(j, new int[] {c & 63, (c >> 6) / 5});
             } else {
                 localIndex.put(j, c / 7);
             }
-            poseAddress.put(j, c);
+            recordType.put(j, type);
+            if (type == 5) {
+                type5.put(j, c); // c is a transform index * 7 here, not a pose address
+                poseAddress.remove(j);
+            } else {
+                type5.remove(j); // a later record for the same joint wins
+                poseAddress.put(j, c);
+            }
             q += type == 7 ? 9 : 7;
             next++;
         }
@@ -321,49 +338,92 @@ public final class ChprSkeleton {
         if (world.isEmpty()) {
             return;
         }
-        // Every combination of "guessed rows" / "identity" over those slots is tried (there are only
-        // a handful), scored against all skinned joints: one slot's choice depends on the others'.
-        // Only slots holding an ancestor of a skinned joint matter.
+        // Uncalibrated slots that hold ancestors of skinned joints are solved by coordinate descent:
+        // each tries every start row (and identity, appended to the table) while the others stay put,
+        // scored by how well all skinned joints' bind poses are rebuilt; repeated until stable, with
+        // the parent-bank check (fixParentBanks) in between -- the two depend on each other.
         java.util.Set<Integer> ancestors = new java.util.HashSet<>();
         for (int j : world.keySet()) {
             for (int q = parentOf(j), d = 0; q >= 0 && d < 256; q = parentOf(q), d++) {
                 ancestors.add(q);
             }
         }
-        List<Integer> open = new ArrayList<>();
+        openSlots.clear();
         for (int slot = 0; slot < 64; slot++) {
             if (calibrated[slot] || rows[slot] == 0) {
                 continue;
             }
             int sl = slot;
             if (slotRows.entrySet().stream().anyMatch(e -> e.getValue()[0] == sl && ancestors.contains(e.getKey()))) {
-                open.add(slot);
+                openSlots.add(slot);
             }
         }
-        if (open.isEmpty() || open.size() > 12) {
-            return;
-        }
-        List<Integer> skinned = new ArrayList<>(world.keySet());
-        int identityRow = identityRow();
-        int bestMask = 0;
-        double bestErr = Double.MAX_VALUE;
-        for (int mask = 0; mask < 1 << open.size(); mask++) {
-            applySlotChoice(open, mask, base, identityRow);
-            double err = chainError(skinned, world);
-            if (err < bestErr - 1e-6) {
-                bestErr = err;
-                bestMask = mask;
+        // Ancestors first: tuning deep slots around a wrong root makes the root stick.
+        int[] depthOf = new int[64];
+        java.util.Arrays.fill(depthOf, Integer.MAX_VALUE);
+        slotRows.forEach((j, sr) -> {
+            if (!ancestors.contains(j)) {
+                return; // only the joints that carry skinned ones count
             }
-        }
-        applySlotChoice(open, bestMask, base, identityRow);
+            int dd = 0;
+            for (int q = parentOf(j); q >= 0 && dd < 256; q = parentOf(q)) {
+                dd++;
+            }
+            depthOf[sr[0]] = Math.min(depthOf[sr[0]], dd);
+        });
+        openSlots.sort(java.util.Comparator.comparingInt(sl -> depthOf[sl]));
+        slotRowCount = rows;
+        slotWorld = world;
+        tableRows = n;
     }
 
-    /** Bit i of {@code mask} set: slot open[i] uses identity locals, else its guessed rows. */
-    private void applySlotChoice(List<Integer> open, int mask, int[] base, int identityRow) {
-        for (Map.Entry<Integer, int[]> e : slotRows.entrySet()) {
-            int i = open.indexOf(e.getValue()[0]);
-            if (i >= 0) {
-                localIndex.put(e.getKey(), (mask >> i & 1) != 0 ? identityRow : base[e.getValue()[0]] + e.getValue()[1]);
+    private final List<Integer> openSlots = new ArrayList<>();
+    private int[] slotRowCount = new int[64];
+    private Map<Integer, double[]> slotWorld = Map.of();
+    private int tableRows;
+
+    /** Parent banks and uncalibrated slot rows, solved together (see assignLocalIndices). */
+    private void solveRig() {
+        if (slotWorld.isEmpty()) {
+            return;
+        }
+        List<Integer> skinned = new ArrayList<>(slotWorld.keySet());
+        int identityRow = identityRow();
+        double err = chainError(skinned, slotWorld);
+        for (int round = 0; round < 4; round++) {
+            double before = err;
+            fixParentBanks();
+            for (int slot : openSlots) {
+                List<Integer> members = new ArrayList<>();
+                slotRows.forEach((j, sr) -> {
+                    if (sr[0] == slot) {
+                        members.add(j);
+                    }
+                });
+                Map<Integer, Integer> keep = new HashMap<>();
+                for (int j : members) {
+                    keep.put(j, localIndex.get(j));
+                }
+                double best = chainError(skinned, slotWorld);
+                Map<Integer, Integer> bestRows = new HashMap<>(keep);
+                for (int cand = -1; cand + slotRowCount[slot] <= tableRows; cand++) {
+                    for (int j : members) {
+                        localIndex.put(j, cand < 0 ? identityRow : cand + slotRows.get(j)[1]);
+                    }
+                    double e = chainError(skinned, slotWorld);
+                    if (e < best - 1e-6) {
+                        best = e;
+                        bestRows.clear();
+                        for (int j : members) {
+                            bestRows.put(j, localIndex.get(j));
+                        }
+                    }
+                }
+                localIndex.putAll(bestRows);
+            }
+            err = chainError(skinned, slotWorld);
+            if (err > before - 1e-6) {
+                break;
             }
         }
     }
@@ -408,6 +468,92 @@ public final class ChprSkeleton {
         m = mul(parentWorld, local(j));
         memo.put(j, m);
         return m;
+    }
+
+    private boolean bankUncertain;
+    private final Map<Integer, Integer> recordType = new HashMap<>();
+    private final Map<Integer, Integer> type5 = new HashMap<>();
+
+    /**
+     * Type-05 records carry a transform index (c / 7), not a pose address -- reading c as one put
+     * those joints on other joints' addresses (the first-person left index finger root shared the
+     * cannon's spine_end, the third-person finger root shared spine_01), so they animated with
+     * someone else's motion. Their real addresses aren't known (clips do write a few addresses no
+     * joint claims, e.g. 14/5, 33/80, 1/0, 26/0 on the player rig, but "next free row of the
+     * parent's slot" put finger roots on what is clearly an aim target), so they keep their bind
+     * pose. Records past the joint list are dropped too.
+     */
+    private void assignType5Addresses() {
+        poseAddress.keySet().removeIf(j -> j >= joints.size());
+    }
+
+    /** Each joint's parent index within its bank (the record's b / 6); the bank comes from a selector. */
+    private final Map<Integer, Integer> parentField = new HashMap<>();
+
+    /**
+     * Parent banks after unparsed records. The parent bank comes from the last 03 selector, and an
+     * unknown record kind in between (0x0D in the player rig) can carry a different one -- the
+     * player rig's spine_01 then hung off Skeleton_Root (bank 0, joint 2) instead of fps_main_bind
+     * (bank 1, joint 2) at hip height, which split the third-person body at the waist when it bent.
+     * Only joints read after such a skip (until the next 03 selector) are checked -- elsewhere the
+     * selector is certain, and testing everything let lookalike rows pull good parents away (the
+     * Griever's twist joints moved onto VFX locators). Each bank's joint with the same in-bank index
+     * is a candidate; the one that best rebuilds the skinned descendants' exact bind poses wins.
+     */
+    private void fixParentBanks() {
+        int banks = (joints.size() + BANK - 1) / BANK;
+        if (banks < 2) {
+            return;
+        }
+        Map<Integer, double[]> world = new HashMap<>();
+        for (Skin skin : skins) {
+            for (int i = 0; i < skin.palette().length && i < skin.inverseBind().size(); i++) {
+                world.putIfAbsent(skin.palette()[i], invertAffine(skin.inverseBind().get(i)));
+            }
+        }
+        if (world.isEmpty()) {
+            return;
+        }
+        Map<Integer, List<Integer>> children = new HashMap<>();
+        parent.forEach((c, p) -> children.computeIfAbsent(p, k -> new ArrayList<>()).add(c));
+        for (Map.Entry<Integer, Integer> e : parentField.entrySet()) {
+            int j = e.getKey(), field = e.getValue();
+            List<Integer> skinnedBelow = new ArrayList<>();
+            java.util.Set<Integer> subtree = new java.util.HashSet<>();
+            java.util.ArrayDeque<Integer> todo = new java.util.ArrayDeque<>(List.of(j));
+            while (!todo.isEmpty() && subtree.size() < 2048) {
+                int q = todo.pop();
+                if (subtree.add(q)) {
+                    if (world.containsKey(q)) {
+                        skinnedBelow.add(q);
+                    }
+                    todo.addAll(children.getOrDefault(q, List.of()));
+                }
+            }
+            if (skinnedBelow.isEmpty()) {
+                continue;
+            }
+            int current = parent.get(j);
+            double bestErr = chainError(skinnedBelow, world);
+            int best = current;
+            for (int k = 0; k < banks; k++) {
+                int cand = BANK * k + field;
+                if (cand == current || cand >= joints.size() || subtree.contains(cand)) {
+                    continue;
+                }
+                parent.put(j, cand);
+                double err = chainError(skinnedBelow, world);
+                if (err < bestErr * 0.5 - 1e-4) {
+                    bestErr = err;
+                    best = cand;
+                }
+            }
+            parent.put(j, best);
+            if (best != current) {
+                children.get(current).remove(Integer.valueOf(j));
+                children.computeIfAbsent(best, k -> new ArrayList<>()).add(j);
+            }
+        }
     }
 
     /** Type-04 records' {slot, row}, turned into transform indices once every slot's size is known. */
@@ -536,7 +682,10 @@ public final class ChprSkeleton {
                 continue;
             }
             int[] pal = new int[n];
-            int bank = 0;
+            // Each entry's high bits are the NEXT entry's bank, so the first entry's bank is in the
+            // 16 bits just before the list (assuming 0 put the player rig's third-person spine_02 on
+            // a bike joint in the other bank, stretching the waist).
+            int bank = bits(c, 87, 16) >> 9;
             boolean ok = true;
             for (int i = 0; i < n; i++) {
                 int x = bits(c, 103 + 16 * i, 16);
@@ -627,6 +776,101 @@ public final class ChprSkeleton {
             return i;
         }
         return -1;
+    }
+
+    /**
+     * Skinned joints know their exact world bind pose (inverse bind matrices), so their exact local
+     * bind transform is inverse(parent world) * own world. Where the table row picked for a joint
+     * disagrees (a row that sits in a break of the table, a slot whose start couldn't be
+     * calibrated -- the first-person rig's finger roots and cannon parts), that exact transform is
+     * appended to the table and used instead. Parents that aren't skinned use their chained pose.
+     */
+    private void fixLocalsFromSkins() {
+        Map<Integer, double[]> known = new HashMap<>();
+        for (Skin skin : skins) {
+            for (int i = 0; i < skin.palette().length && i < skin.inverseBind().size(); i++) {
+                known.putIfAbsent(skin.palette()[i], invertAffine(skin.inverseBind().get(i)));
+            }
+        }
+        if (known.isEmpty()) {
+            return;
+        }
+        List<Integer> order = new ArrayList<>();
+        for (int j = 0; j < joints.size(); j++) {
+            order.add(j);
+        }
+        int[] depth = new int[joints.size()];
+        for (int j = 0; j < joints.size(); j++) {
+            int dd = 0;
+            for (int q = parentOf(j); q >= 0 && dd < 256; q = parentOf(q)) {
+                dd++;
+            }
+            depth[j] = dd;
+        }
+        order.sort(java.util.Comparator.comparingInt(j -> depth[j]));
+        Map<Integer, double[]> chained = new HashMap<>();
+        List<float[]> added = new ArrayList<>();
+        int base = transformCount();
+        for (int j : order) {
+            int p = parentOf(j);
+            double[] parentWorld = p < 0 ? identity() : known.containsKey(p) ? known.get(p) : chained.get(p);
+            double[] own = known.get(j);
+            if (own != null && parentWorld != null && localIndex.containsKey(j) | p >= 0) {
+                double[] exact = mul(invertAffine(parentWorld), own);
+                Integer r = localIndex.get(j);
+                boolean ok = r != null && r >= 0 && r < transformCount() && maxDiff(local(j), exact) < 1e-3;
+                if (!ok && rigid(exact)) {
+                    added.add(trsOf(exact));
+                    localIndex.put(j, base + added.size() - 1);
+                }
+            }
+            double[] mine = parentWorld == null ? null : mul(parentWorld, local(j));
+            if (!added.isEmpty() && localIndex.getOrDefault(j, -1) >= base) {
+                float[] t = added.get(localIndex.get(j) - base);
+                mine = mul(parentWorld, quatMat(t[0], t[1], t[2], t[3], t[4], t[5], t[6]));
+            }
+            chained.put(j, mine);
+        }
+        if (!added.isEmpty()) {
+            float[] t = java.util.Arrays.copyOf(transforms, transforms.length + 7 * added.size());
+            for (int i = 0; i < added.size(); i++) {
+                System.arraycopy(added.get(i), 0, t, transforms.length + 7 * i, 7);
+            }
+            transforms = t;
+        }
+    }
+
+    private static boolean rigid(double[] m) {
+        for (int r = 0; r < 3; r++) {
+            for (int c = 0; c < 3; c++) {
+                double dot = m[r * 4] * m[c * 4] + m[r * 4 + 1] * m[c * 4 + 1] + m[r * 4 + 2] * m[c * 4 + 2];
+                if (Math.abs(dot - (r == c ? 1 : 0)) > 1e-2) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    /** {qw, qx, qy, qz, tx, ty, tz} of a rigid row-major matrix. */
+    private static float[] trsOf(double[] m) {
+        double m00 = m[0], m01 = m[1], m02 = m[2], m10 = m[4], m11 = m[5], m12 = m[6], m20 = m[8], m21 = m[9], m22 = m[10];
+        double tr = m00 + m11 + m22, w, x, y, z;
+        if (tr > 0) {
+            double s = Math.sqrt(tr + 1) * 2;
+            w = 0.25 * s; x = (m21 - m12) / s; y = (m02 - m20) / s; z = (m10 - m01) / s;
+        } else if (m00 > m11 && m00 > m22) {
+            double s = Math.sqrt(1 + m00 - m11 - m22) * 2;
+            w = (m21 - m12) / s; x = 0.25 * s; y = (m01 + m10) / s; z = (m02 + m20) / s;
+        } else if (m11 > m22) {
+            double s = Math.sqrt(1 + m11 - m00 - m22) * 2;
+            w = (m02 - m20) / s; x = (m01 + m10) / s; y = 0.25 * s; z = (m12 + m21) / s;
+        } else {
+            double s = Math.sqrt(1 + m22 - m00 - m11) * 2;
+            w = (m10 - m01) / s; x = (m02 + m20) / s; y = (m12 + m21) / s; z = 0.25 * s;
+        }
+        double n = Math.sqrt(w * w + x * x + y * y + z * z);
+        return new float[] {(float) (w / n), (float) (x / n), (float) (y / n), (float) (z / n), (float) m[3], (float) m[7], (float) m[11]};
     }
 
     // ---- poses -----------------------------------------------------------------

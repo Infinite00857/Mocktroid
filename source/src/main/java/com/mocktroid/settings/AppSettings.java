@@ -71,6 +71,7 @@ public final class AppSettings {
     private static final String KEY_AUTOPLAY_ANIMATIONS = "preview.autoplayAnimations";
     private static final String KEY_ANIMATION_FPS = "preview.animationFps";
     private static final String KEY_HIDE_VISORS = "preview.hideVisors";
+    private static final String KEY_SMOOTH_TEXTURES = "preview.smoothTextures";
     private static final String KEY_CANNON_FROST = "preview.cannonFrost";
     private static final String KEY_NEXT_SOUND = "audio.autoplayNextSound";
     private static final String KEY_UPDATE_ROMFS = "updateRomfsPath";
@@ -120,6 +121,8 @@ public final class AppSettings {
     private final IntegerProperty animationFps = new SimpleIntegerProperty(this, "animationFps", 60);
     /** Leave models' blended submeshes (Samus's visor, glass) out of the previewer. */
     private final BooleanProperty hideVisors = new SimpleBooleanProperty(this, "hideVisors", false);
+    /** 2x smoothed textures in the model preview (rounds off texel stair steps up close; 4x memory). */
+    private final BooleanProperty smoothTextures = new SimpleBooleanProperty(this, "smoothTextures", false);
     /** 0-100: how much of the arm cannon's frost layer (the snowy white on its barrel) shows. */
     private final IntegerProperty cannonFrost = new SimpleIntegerProperty(this, "cannonFrost", 0);
     /** When a sound / video / animation clip finishes, move to the next one in the list and play it. */
@@ -151,6 +154,7 @@ public final class AppSettings {
         autoplayAnimations.addListener((obs, old, val) -> prefs.putBoolean(KEY_AUTOPLAY_ANIMATIONS, val));
         animationFps.addListener((obs, old, val) -> prefs.putInt(KEY_ANIMATION_FPS, val.intValue()));
         hideVisors.addListener((obs, old, val) -> prefs.putBoolean(KEY_HIDE_VISORS, val));
+        smoothTextures.addListener((obs, old, val) -> prefs.putBoolean(KEY_SMOOTH_TEXTURES, val));
         cannonFrost.addListener((obs, old, val) -> prefs.putInt(KEY_CANNON_FROST, val.intValue()));
         autoplayNextSound.addListener((obs, old, val) -> prefs.putBoolean(KEY_NEXT_SOUND, val));
         autoplayNextVideo.addListener((obs, old, val) -> prefs.putBoolean(KEY_NEXT_VIDEO, val));
@@ -182,6 +186,7 @@ public final class AppSettings {
         autoplayAnimations.set(prefs.getBoolean(KEY_AUTOPLAY_ANIMATIONS, false));
         animationFps.set(clamp(prefs.getInt(KEY_ANIMATION_FPS, 60), 1, 120));
         hideVisors.set(prefs.getBoolean(KEY_HIDE_VISORS, false));
+        smoothTextures.set(prefs.getBoolean(KEY_SMOOTH_TEXTURES, false));
         cannonFrost.set(clamp(prefs.getInt(KEY_CANNON_FROST, 0), 0, 100));
         autoplayNextSound.set(prefs.getBoolean(KEY_NEXT_SOUND, false));
         autoplayNextVideo.set(prefs.getBoolean(KEY_NEXT_VIDEO, false));
@@ -221,6 +226,7 @@ public final class AppSettings {
         showFloor.set(true);
         animationFps.set(60);
         hideVisors.set(false);
+        smoothTextures.set(false);
         cannonFrost.set(0);
         autoplayNextSound.set(false);
         autoplayNextVideo.set(false);
@@ -261,6 +267,7 @@ public final class AppSettings {
     public BooleanProperty autoplayAnimationsProperty() { return autoplayAnimations; }
     public IntegerProperty animationFpsProperty() { return animationFps; }
     public BooleanProperty hideVisorsProperty() { return hideVisors; }
+    public BooleanProperty smoothTexturesProperty() { return smoothTextures; }
     public IntegerProperty cannonFrostProperty() { return cannonFrost; }
     public BooleanProperty autoplayNextSoundProperty() { return autoplayNextSound; }
     public BooleanProperty autoplayNextVideoProperty() { return autoplayNextVideo; }

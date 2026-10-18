@@ -50,13 +50,30 @@ Point it at a romfs dump and browse textures, 3D models, animations, sounds and 
 
 | Requirement | Notes |
 |---|---|
-| **JDK 21 or newer** | Required |
-| **Maven** | Required to build and run |
+| **JDK 21 or newer** | Required to build from source (the downloads bundle Java) |
+| **Maven** | Optional, the bundled wrapper (`source/mvnw`) downloads it if you don't have it |
 | **A romfs dump of the game** | Required |
 | [`vgmstream-cli`](https://github.com/vgmstream/vgmstream) | Optional, needed for sound previews and sound export. Auto-detected on `PATH` or in `./tools/vgmstream`, or set it in **Settings > Audio** |
 | [`ffmpeg`](https://ffmpeg.org/) | Optional, needed for the one WebM video and for FLAC/OGG/MP3/WebP export |
 
-## Getting started
+## Download (easiest)
+
+Grab the zip for your system from the [**Releases**](https://github.com/Infinite00857/Mocktroid/releases) page. Java is bundled, so there is nothing else to install:
+
+| System | File | How to open |
+|---|---|---|
+| **Windows** | `Mocktroid-*-windows-x64.zip` | Unzip, then run `Mocktroid\Mocktroid.exe` |
+| **macOS (Apple Silicon)** | `Mocktroid-*-macos-arm64.zip` | Unzip, then right-click `Mocktroid.app` > **Open** the first time (the app isn't signed). If macOS says it's damaged, run `xattr -dr com.apple.quarantine Mocktroid.app` |
+| **macOS (Intel)** | `Mocktroid-*-macos-x64.zip` | Same as above |
+| **Linux** | `Mocktroid-*-linux-x64.zip` | Unzip, then run `Mocktroid/bin/Mocktroid` |
+
+Optional extras: install [`vgmstream-cli`](https://github.com/vgmstream/vgmstream) for sound previews and [`ffmpeg`](https://ffmpeg.org/) for the WebM video and extra export formats.
+
+The zips are built automatically by GitHub Actions (`.github/workflows/release.yml`) for every version tag. The newest build of `main` is also under the **Actions** tab (open the latest run, then **Artifacts**).
+
+## Building from source
+
+You only need a **JDK 21 or newer** ([Adoptium](https://adoptium.net)). Maven is optional: the launch scripts use your installed Maven, or else the bundled Maven wrapper, which downloads it the first time.
 
 ```bash
 git clone https://github.com/Infinite00857/Mocktroid.git
@@ -78,7 +95,7 @@ On macOS/Linux you may need to `chmod +x` the scripts first. On Windows, if Java
 ### Or run with Maven directly
 
 ```bash
-mvn -f source/pom.xml compile javafx:run
+mvn -f source/pom.xml compile javafx:run      # or: source/mvnw -f source/pom.xml compile javafx:run
 ```
 
 ### Build a standalone jar
@@ -150,7 +167,7 @@ Mocktroid is under active development. Roughly:
 | Character animation | Working, still being refined (some rigs and fingers pose incorrectly) |
 | Materials / ROOM preview | Not started |
 | Cinematic viewer | Planned |
-| Packaged installers (`jpackage`) | Not started |
+| Ready-to-run downloads (`jpackage`) | Built by GitHub Actions for Windows, macOS and Linux |
 
 See [`roadmap.md`](roadmap.md) for the full module list and open issues.
 
