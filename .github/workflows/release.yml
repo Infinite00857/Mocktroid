@@ -53,6 +53,10 @@ jobs:
         run: |
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then v="${GITHUB_REF#refs/tags/v}"; else v="0.1.0"; fi
           echo "version=$v" >> "$GITHUB_OUTPUT"
+          # macOS app bundles can't have 0 as the first version number (jpackage refuses), so
+          # 0.x.y becomes 1.x.y inside the Mac app only; file names keep the real version.
+          if [[ "$RUNNER_OS" == "macOS" && "$v" == 0.* ]]; then appv="1.${v#0.}"; else appv="$v"; fi
+          echo "appversion=$appv" >> "$GITHUB_OUTPUT"
 
       - name: macOS icon
         if: runner.os == 'macOS'
@@ -77,7 +81,7 @@ jobs:
           cp target/mocktroid.jar target/jpk-in/
           jpackage --type app-image \
             --input target/jpk-in --main-jar mocktroid.jar --main-class com.mocktroid.Launcher \
-            --name Mocktroid --app-version "${{ steps.version.outputs.version }}" --icon "$icon" \
+            --name Mocktroid --app-version "${{ steps.version.outputs.appversion }}" --icon "$icon" \
             --java-options "-Dfile.encoding=UTF-8" \
             --add-modules "java.base,java.desktop,java.logging,java.prefs,java.xml,java.scripting,java.net.http,jdk.unsupported,jdk.jsobject,jdk.xml.dom,java.management,jdk.crypto.ec,jdk.zipfs" \
             --jlink-options "--strip-debug --no-man-pages --no-header-files" \
