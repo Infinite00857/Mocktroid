@@ -199,3 +199,29 @@ HOW TO REPRODUCE
 source/tools/chpr has ChprMap (byte coverage + gap listing) and ChprTables (clip outputs vs hierarchy /
 output list); its README.txt explains how to run them. Other statistics (bind locals vs inverse binds,
 constant pools, posing) came from throwaway tools built the same way against the app's classes.
+
+
+14. FINDINGS FROM THE MP4 GAMEPLAY PORT (2026-10-18, E:\Mp4ModTest, surrealgame docs/mp4_mod.md)
+
+- Clip index = list D index (verified on 7238eaad: every ChprInfo clip's index equals the position of its name in list D).
+  Payload id = list D index + a per-file offset (852 for 7238eaad). ChprInfo's clip-record scan finds only 606 records,
+  but 7238eaad stores 1157 payloads (ids 852..2517); with this rule all 1157 get their names. Mocktroid lists only
+  the 606 today, so ~550 clips (fpgun_*, fp_movement_grid_*_addLeftArm, fp_lockOn_*, fpla_*, fp_psychic_*, fp_legacyB_*,
+  fpRep_pitchAim_*, fpAddFA_*, ...) are missing from the animation viewer.
+- 513 list-D names have no payload anywhere in the romfs (all paks + the patch pak scanned): e.g. fp_idle_samus,
+  fp_movement_grid_*_samus (non-additive), fpgun_rep_power_shot_samus, fpgunRep_*_samus. They were stripped from the
+  shipping game; the game plays the remaining layered clips instead.
+- First-person clips are layers, not full poses:
+    fp_idle_staticBase_samus               full static pose (every viewmodel joint, no motion)
+    fpRep_pitchAim_L{D,U}{10..70}_samus    aim poses: fps_grid_aim_R/L + camera_stabilizer (override)
+    *_addLeftArm / *_addLeftPair           left-arm deltas (identity at rest, 3 joints + unclaimed 14/5)
+    *_addArm / *_addRight                  gun-arm deltas: only fps_shoulder_r_bind (kick, charge, element warm-ups)
+    fpgun_* without "add"                  cannon parts (flaps, ring segments, hubs, gun_bind): eleStub_{elem}{Base,
+                                           Upgrade,Super} (element shots), powerChargeWarmup, psychicChargeWarmup
+  "Add" clips are pure deltas (identity at rest), so playing one alone (as Mocktroid does) shows nearly no motion. That
+  explains "many viewmodel clips leave the arms still" (roadmap open item 9). Compose: q = q_add * q_base, t = t_base + t_add.
+- Viewmodel rig space: Y up, the camera looks down +Z, Samus's right = -X; camera_attach_jnt = eye (2.59 in
+  fp_idle_staticBase, under camera_stabilizer). fpRep_pitchAim poses rotate camera_stabilizer (LU40 = 40 degrees up).
+- The UI_HUD.pak CHPR 4129fedc holds Samus's face reflection in the visor (SMDL 0408974d, 11-joint face rig):
+  wince_{light,medium,heavy}0{1,2,3}_FaceReflection_Samus.
+- The Thirdperson gameplay body (f4410ee0) has its geometry twice (submesh names *_LOD0_1_* and *_LOD0_*, 9181 verts each).

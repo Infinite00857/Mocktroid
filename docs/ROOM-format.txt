@@ -1,0 +1,76 @@
+ROOM FORMAT - WHAT IS KNOWN (2026-10-18)
+
+Found while porting the MP4 HUD (E:\Mp4ModTest: tools/room_probe.py, room_objects.py, mp4_hud_scene.py; surrealgame
+docs/mp4_mod.md). Checked on UI_HUD.pak's ROOM 4ecd6236 ("UI_HUD") and fg_1040_moteDoor. The HUD itself is a ROOM: its
+widgets are 3D meshes placed by ROOM transforms, like a level.
+
+1. CHUNK TREE (RFRM forms / 24-byte chunks: id, u64 size, u32, u64 skip)
+
+  ROOM v290/292
+    HEAD: RMHD (389 B), PGRP, LGEN, DOCK, BLIT, LUNS (u16 unit count), LUNT x n { LUHD, LRES, LLYR }
+    STRP                    string pool (STRG keys the room uses: HUD_*, Compass_N, Tutorial_*, ...)
+    SDTA: SDHR (schema/header, 167-230 KB), SDEN x ~4000 (component data), SDEC, SDAP, IDTA x ~7000-9600 (instances)
+    LYRS: LAYR x n { LHED, GSRP { GGOB x n }, SRIP { COMP } }
+
+  LRES = the room's resources: records of reversed FourCC + 16-byte GUID ("LDMC" = CMDL, "RTXT" = TXTR, "PMSC" = CSMP ...).
+
+2. COMPONENTS AND INSTANCES (verified on UI_HUD)
+
+  SRIP/COMP: 12-byte rows (u32 component type hash, u32 SDEN index, u32 IDTA index). The 6954 rows of UI_HUD reference
+             all 6958 IDTA chunks (4 are unreferenced) and 3913 SDEN chunks.
+  SDEN:      shared component data (deduplicated: one SDEN serves many instances). Starts with the type hash bytes.
+  IDTA:      one per component instance: 16-byte instance GUID (+ u32 0), sometimes followed by tagged overrides
+             ('PMET' + template GUID, 'VTCA' ...: prefab / template instancing; not decoded).
+  GGOB:      (level rooms) a game object: GUID[16], u16 n, n x (u32 type hash, u32 SDEN index, u32 id).
+
+  Property data inside SDEN is a list of (u32 property hash, u16 size, data); nested structs use the same scheme with a
+  u16 count. Hashes seen: e8bdc12b (16 B) = model CMDL/SMDL GUID; 1ac9c6f6 (16 B) = RGBA colour.
+
+3. TRANSFORM COMPONENT (type bytes 74 97 49 f1, hash 0x749749f1; most common component)
+
+  +0  u32 type
+  +4  u8, u8 hasParent, u8
+  +7  GUID[16]  link (template / parent; zero for many)
+  +23 f32 position[3], f32 rotation[3] (Euler degrees, R = Rz * Ry * Rx), f32 scale[3]
+  +59 u32 3, u32 n, n x GUID[16] = instance GUIDs of the entity's other components (model etc.; 604/604 resolve to IDTA)
+
+  Euler order verified on the HUD's four weapon diamonds: only Rz*Ry*Rx makes them coplanar and facing the camera.
+  Level example (fg_1040): pos (-91.5, 6.75, 95.7), rot (0, -14, 0), scale 1.
+
+4. MODEL COMPONENT (type bytes 16 ec 31 df)
+
+  Property e8bdc12b = CMDL GUID; f6c6c91a-tagged 16 bytes = RGBA tint (helmet frame 0.357 grey). The entity's model
+  is found by looking up which transform lists the model component's instance GUID.
+
+5. UI_HUD SPECIFICS
+
+  85 model instances with transforms. HUD space: camera on the axis looking down -Z (fits a screenshot at z ~ +1,
+  fovY ~ 95). Radar d8a5b43d at (-10.5, 5.4, -5.1) rot Y 15; weapon diamonds ac2a3800 x4 around (-11.3, -4.2, -5.9);
+  boss bar 48442b16 (0, 6.1, -6.7); scan panels 78b816bd (+-11.85, 1, -9.9) rot +-25; helmet frame 23ff7bc3 + glow
+  54628b8d + side 52b984a6 + psychic interior 56e9e5e8 at the origin. Energy bar, tank strip, ammo meters and lock
+  brackets are not placed by plain transforms (probably prefab templates, the 'PMET' IDTA overrides).
+
+6. UNKNOWN
+
+  SDHR (likely the type schema), SDEC, SDAP, IDTA override tags, template resolution, the transform link GUID at +7,
+  the layer / GSRP grouping in the HUD (only 1 GGOB there).
+
+7. CAMERA COMPONENT (type bytes 89 76 e5 4f, hash 0x4fe57689) - verified 2026-10-18
+
+  Property list (u16 count, then u32 hash / u16 size / data): 6e8bd962 = field of view (degrees, vertical - fits two
+  in-game screenshots), 90198be3 = near, 714a49d6 = far, plus nested blocks (6a1bcf61 holds another 60.0).
+  UI_HUD: one camera, fov 55, near 0.3, far 15000, on an entity at (0, 0, 8.644) rotated (180, 0, 180) -> it looks
+  down -Z at the HUD; the helmet frame and every widget are drawn through it.
+  universeRoom (always loaded): ~20 camera components (fov 42.5..90, near 0.45, far 17000) - the player's per-mode
+  cameras (near 0.45 matches the first-person camera); which is which is not mapped yet.
+  Note the HUD widget transforms ARE world values in that space (projecting the radar and weapon diamonds through this
+  camera matches the screenshots within a few percent).
+
+8. RELATED FINDINGS (2026-10-18)
+
+  CAUD (sound event): RFRM 'CAUD'; float parameters, then 1..n CSMP GUIDs (sample variations; the first at +0x59 or
+  +0x5a, then every 0xDA bytes). No event names inside. The player CHPR (f1ed30ec) lists 186 CAUD dependencies but
+  their order does not follow its 104 SoundSignal / SoundState channels -> names -> sounds needs the event objects.
+  Model LOD sets: the MPR-Model-Dumper glTF calls the CMDL's real LOD 0 "_LOD0_1_" for the third-person Varia
+  (f4410ee0) and the Vi-O-La (119a70e1); its "_LOD0_" set is a different LOD (the body's uses the teal material 0).
+  Raw CMDL UVs are bottom-up relative to the decoded PNGs (v' = 1 - v).

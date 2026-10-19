@@ -21,7 +21,7 @@ Point it at a romfs dump and browse textures, 3D models, animations, sounds and 
 
 <div align="center">
 
-[![Mocktroid animation demo](docs/demo.gif)](docs/demo.mp4)
+[![Mocktroid animation demo](assets/demo.gif)](assets/demo.mp4)
 
 <sub>Character animation playback in the model viewer. Click for the full-quality video.</sub>
 
@@ -29,10 +29,10 @@ Point it at a romfs dump and browse textures, 3D models, animations, sounds and 
 
 <br />
 
-![Browsing and searching models](docs/screenshot-1.png)
+![Browsing and searching models](assets/screenshot-1.png)
 <sub>Search and browse every model in the romfs, with cached thumbnails in grid view.</sub>
 
-![Playing an animation clip on the Samus Varia suit](docs/screenshot-2.png)
+![Playing an animation clip on the Samus Varia suit](assets/screenshot-2.png)
 <sub>Double-click a model to list its animation clips and play them on the skinned model.</sub>
 
 ## Features
@@ -40,7 +40,7 @@ Point it at a romfs dump and browse textures, 3D models, animations, sounds and 
 - **PAK browser** - reads all 441 paks (about 90,000 assets) directly, including the game's custom LZSS/Huffman compression. List or grid view, search, per-pak filter and sorting.
 - **Textures (TXTR)** - Tegra block-linear deswizzling and BC1-7 / BC6H / ASTC decoding. Mip, layer, cube-face and 3D-slice selection, channel isolation, HDR exposure, zoom/pan, PNG export. Flipbook playback for animated 2D-array textures, with GIF/WebP export.
 - **Models (CMDL / SMDL)** - JavaFX 3D preview with orbit/pan/zoom, free camera, wireframe, custom skybox and floor grid. Base colour, normal, metal/roughness and glow maps, plus bone overlay for skinned models.
-- **Character animations (CHPR)** - double-click a model to browse its animation clips and watch them play on the CPU-skinned model at 60 fps. Clip data is decoded with a bit-packed stream decoder reverse-engineered from the game itself. See [`Explanation.txt`](Explanation.txt).
+- **Character animations (CHPR)** - double-click a model to browse its animation clips and watch them play on the CPU-skinned model at 60 fps. Clip data is decoded with a bit-packed stream decoder reverse-engineered from the game itself. See [`Explanation.txt`](docs/Explanation.txt).
 - **Sounds (CSMP)** - decoded with `vgmstream-cli`, with waveform view, loop markers, loop count, autoplay and duration sorting.
 - **Videos (FMV0)** - plays the game's embedded MP4s (WebM ones are converted via `ffmpeg`).
 - **Export** - models to OBJ/MTL or glTF 2.0, sounds to WAV/FLAC/OGG/MP3, videos to MP4, animated textures to GIF/WebP.
@@ -147,10 +147,11 @@ Mocktroid/
 │       ├── audio/           Sound playback and UI sounds
 │       ├── export/          OBJ / glTF / audio / video / GIF exporters
 │       └── settings/        Persisted settings
-├── assets/                  Art used by the app
-├── docs/                    Screenshots and demo video used in this README
-├── Explanation.txt          Write-up of what's been learned about the game's file formats
-├── roadmap.md               Detailed dev notes, module status and open work
+├── assets/                  Art used by the app, plus the screenshots and demo video in this README
+├── docs/                    Dev notes and file format write-ups
+│   ├── Explanation.txt      What's been learned about the game's file formats
+│   ├── roadmap.md           Detailed dev notes, module status and open work
+│   └── *-format.txt, ...    Notes on single formats (CHPR, ROOM) and findings
 └── Run Mocktroid.*          Launch scripts
 ```
 
@@ -169,11 +170,11 @@ Mocktroid is under active development. Roughly:
 | Cinematic viewer | Planned |
 | Ready-to-run downloads (`jpackage`) | Built by GitHub Actions for Windows, macOS and Linux |
 
-See [`roadmap.md`](roadmap.md) for the full module list and open issues.
+See [`roadmap.md`](docs/roadmap.md) for the full module list and open issues.
 
 ## File format research
 
-The game's formats are mostly packed binary with no labels. [`Explanation.txt`](Explanation.txt) documents what's understood so far (paks, textures, models and materials, skeletons, animation clips, videos, sounds) and how each piece was worked out. Parts are verified against the whole romfs, while others are marked as educated guesses.
+The game's formats are mostly packed binary with no labels. [`Explanation.txt`](docs/Explanation.txt) documents what's understood so far (paks, textures, models and materials, skeletons, animation clips, videos, sounds) and how each piece was worked out. Parts are verified against the whole romfs, while others are marked as educated guesses.
 
 ## Credits
 

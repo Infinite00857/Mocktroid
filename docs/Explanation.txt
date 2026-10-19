@@ -87,6 +87,10 @@ Most of the formats are packed binary with no labels, so the method was usually:
 - Viola bikes: a 1-pixel-tall colour strip (TCH1) indexed by a grey map (TCH2) paints the iridescent finish.
 - First-person arm cannons carry an ice shell: a separate snow-and-icicles mesh (one shared material,
   MATI 8c4c0e03) over the barrel that the game shows in cold areas.
+- The arm cannon also has one glow layer per weapon: Ice (blue panels), Fire (red / orange) and Thunder
+  (gold). The game lights only the active weapon's layer; drawing all of them at once covered the cannon
+  in glow. They are found by their ICAN texture, shared by every suit's cannon and the cinematic gun,
+  and are off unless the Ice / Fire / Thunder toggles are on (docs/ARM-CANNON-LIGHTS.txt).
 - Varia and Psychic draw their visor as an opaque mesh (no blended submesh). Recognised as: a small mesh
   bound entirely to one joint, with its own material, using the body's base colour and a full-size glow map.
 
@@ -188,8 +192,10 @@ bind poses exactly.
 
 - ROOM and FSMC (state machines): needed to place level geometry and to sequence cutscenes. Not
   documented anywhere yet.
-- Shaders: how the material values (ICNC, CCHn, BKLT) combine, the visor's inner pattern and scan effect,
-  the arm cannon's green side lights and orange side strips (their mask isn't in any texture slot found).
+- Shaders: how the material values (ICNC, CCHn, BKLT) combine, the visor's inner pattern and scan effect.
+  The arm cannon's top strips (a separate light material whose colour ramp sits in a type-6 MATI slot) and
+  green slots (layer 40 of the METL blue layer-id channel) are drawn now; its front-ring orange light probably
+  uses the second UV set, which isn't read yet (docs/ARM-CANNON-LIGHTS.txt section 5).
 - UI animation frame order.
 - Why some first-person fingers and some psydroid / Griever clips still pose wrongly (probably more rig
   quirks like the ones in section 5).

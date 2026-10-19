@@ -1,0 +1,69 @@
+ARM CANNON LIGHTS - WHY THEY LOOK WRONG (2026-10-18, found while porting MP4 to E:\Mp4ModTest)
+
+Model: first-person viewmodel ca0e9110 ("default" Varia). Tools: E:\Mp4ModTest\tools\anim\Mp4Export matinfo (every
+material's shader + texture slots), tools\mp4_bake.py (bakes base + glow the way described below), tex_channels.py
+(contact sheet of each material's channels).
+
+1. THE CANNON HAS SEVERAL GLOW LAYERS, ONE PER WEAPON STATE (likely; colours + shaders + clips agree)
+
+  mat  shader    ICAN                     what it is
+  0    980dfae2  cfff67c8 512 UV layout   blue panels                -> Ice Shot state
+  1    fdf33b34  d417b350 128x128 table   green strip (Varia lights) -> always on
+  2    3425eca6  abbaa677 512 UV layout   red / orange               -> Fire Shot state ("frost" shader = fire-shot parts)
+  3    e3a25413  24661de5 512 UV layout   gold patterns              -> Thunder Shot state
+  6    3425eca6  564eb50e 256x256 table   orange ramp                -> Fire Shot state
+  7    563c3715  82e288ea table           orange (top light strips)  -> always on (yellow-orange in combat footage)
+  9    980dfae2  4465a1bf 512 UV layout   green dot on the arm       -> always on (the Varia's green light)
+
+  The game switches these per weapon state: the player CHPR has SoundState.Samus_Weapon_{Fire,Ice,Thunder}shot_State_LP
+  channels and fpgun_eleStub_{fire,ice,thunder}{Base,Upgrade,Super} cannon-part clips. Drawing every ICAN at once (as
+  Mocktroid's ModelPreview does) lights the blue, red, gold and orange layers together -> a cannon covered in glow.
+
+2. UV-LAYOUT ICANs ON AN OPAQUE BASE GLOW EVERYWHERE
+
+  For mats 0 and 3 the BCLR alpha is white almost everywhere, so "ICAN masked by BCLR alpha" lights the whole surface
+  (44% of mat 3's texels). In game those layers are off unless their weapon is active; the alpha mask isn't what keeps
+  them dark.
+
+3. BASE COLOUR
+
+  - Mat 1 (the arm's main cyan) is a layered shader (TCH0..TCH4). Its near-black BCLR regions are filled by another
+    layer in game; drawn raw they read as black "camo" patches. Drawing them as darkened gunmetal (0x3E5A58 * 0.7)
+    is closer.
+  - METL red = metal; darkening by 0.55 * metal turns the cyan into the in-game dark teal.
+
+4. WHAT WORKS IN THE PORT
+
+  Bake each material once (base + glow), then multiply each material's glow at runtime: m0 by Ice, m2 / m6 by Fire,
+  m3 by Thunder; m1, m7 and m9 always on.
+  Also: LOD 0 of ca0e9110 is submeshes 0..11 (+ 21 = ice shell). Submeshes 0, 1 and 3 (mats 8 / 9) are the upper-arm /
+  bicep armour, visible in game.
+
+5. THE TOP LIGHTS (Mocktroid, 2026-10-18 -- checked by painting each material a flat colour in the viewer)
+
+  - The long strips on top (yellow-orange in game) are mat 5, shader c558787e, submesh 11 (48 tris). Its MATI has
+    no type-5 texture slots; its BCLR is a TYPE-6 slot: a410172b, a 128x8 colour ramp (dark grey -> orange -> pale
+    yellow f1eb5e) mapped by UV0 (u runs along the strip). Mocktroid now loads type-6 slots as "<tag>:6" and draws
+    c558787e as a light: the ramp as base colour and glow. (106 MATIs / ~30 shaders have type-6 BCLRs; only
+    c558787e uses them so far -- the rest are unchecked.) Same material on every suit and the third-person Varia.
+  - The two small slots (purple in BCLR, green in game) are on mat 1 (submesh 10), shader fdf33b34. BCLR alpha is 0
+    there. METL BLUE is a per-texel layer id for this layered shader, with discrete values 0, 12, 40, 56, 76, 255;
+    value 40 occurs only at the two slots. Mocktroid lights layer 40 in the brightest colour of the ICAN table's row
+    (d417b350: green 4ae698 on Varia; 73ea4a64 on the other suits: purple on Psychic) and blacks out the base colour
+    under it (the purple base turned the green aqua).
+  - Mat 7 (563c3715, the orange 8x256 ramp 82e288ea) is NOT the top strips: it is submesh 5, a copy of submesh 7's
+    608 triangles (the barrel's front rings / muzzle), hidden under it in the viewer. Its BCLR alpha is 0 under UV0,
+    so it never lit. Its vertices carry a second UV set (the tex-coord attribute is RGBA16F: xy = UV0, zw = UV1;
+    UV1.v spans 0.44..0.74, the bright part of the ramp) -- the ramp is probably sampled by UV1. Not drawn yet.
+  - Animation (from the user, who has watched the game): the strip light RUNS ALONG the strip; the green slots are
+    STEADY. Mocktroid holds the layered shader's glow on one frame (its ICAN table changes down its length, but not
+    in game). A guessed running light (the ramp scrolled along U) still looked wrong, so the strip is a STEADY glow
+    for now -- to revisit once the user has documented more research on how it animates.
+
+6. THE THIRD-PERSON GAMEPLAY BODY (f4410ee0, "Varia Gplaymodel" in the user's custom names)
+
+  The whole cannon is mat 0, shader a8842fb5, 256x128 BCLR/METL/NMAP and a WHITE 4x4 ICAN (a6cc3300). BCLR alpha
+  masks the strips (a gradient along each) and the one visible slot. The glow colour is the MATI's ICNC value
+  (4.0, 2.95, 0.118, 1): an orange multiplier. Mocktroid now reads ICNC (ModelLoader glowColors) and tints grey
+  lookup tables with it (coloured tables are left alone) -- before, these lights drew white. Its METL blue is
+  blurred at this size (no clean strip / slot ids), so the strips aren't animated and the slot is orange too.
