@@ -27,16 +27,17 @@ jobs:
             name: linux-x64
           - os: macos-latest
             name: macos-arm64
-          - os: macos-13
+          # macos-13 was retired (jobs just sit queued for 24h); this is the Intel image now.
+          - os: macos-15-intel
             name: macos-x64
     runs-on: ${{ matrix.os }}
     defaults:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '21'
@@ -100,7 +101,7 @@ jobs:
           fi
           echo "ZIP=source/target/$out" >> "$GITHUB_ENV"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: Mocktroid-${{ matrix.name }}
           path: ${{ env.ZIP }}
