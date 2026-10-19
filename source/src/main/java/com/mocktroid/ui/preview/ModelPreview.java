@@ -85,6 +85,12 @@ public final class ModelPreview {
     private final ToggleButton wireframeToggle = new ToggleButton("Wireframe");
     private final ToggleButton bonesToggle = new ToggleButton("Bones");
     private final ToggleButton lockjawToggle = new ToggleButton("Lockjaw");
+    /** Arm cannon glow layers, one per weapon state (see {@link #WEAPON_GLOWS}); shown only for models that have them. */
+    private final ToggleButton iceToggle = new ToggleButton("Ice");
+    private final ToggleButton fireToggle = new ToggleButton("Fire");
+    private final ToggleButton thunderToggle = new ToggleButton("Thunder");
+    /** The weapon toggles' state, kept while browsing from one suit to the next. */
+    private static boolean iceOn, fireOn, thunderOn;
     /** Skeleton overlay: joints + parent links, drawn over the mesh (no depth test). */
     private final Group bonesGroup = new Group();
 
@@ -307,6 +313,22 @@ public final class ModelPreview {
         lockjawToggle.setTooltip(new javafx.scene.control.Tooltip("Show Sylux's Lockjaw"));
         lockjawToggle.setOnAction(e -> meshViews.stream().filter(v -> Boolean.TRUE.equals(v.getProperties().get("lockjaw")))
             .forEach(v -> v.setVisible(lockjawToggle.isSelected())));
+        ToggleButton[] weapons = {iceToggle, fireToggle, thunderToggle};
+        boolean[] weaponOn = {iceOn, fireOn, thunderOn};
+        for (int i = 0; i < weapons.length; i++) {
+            ToggleButton t = weapons[i];
+            t.getStyleClass().add("channel-toggle");
+            t.setSelected(weaponOn[i]);
+            t.setVisible(false);
+            t.setManaged(false);
+            t.setTooltip(new javafx.scene.control.Tooltip("Arm cannon " + t.getText() + " Shot lights (the game lights one weapon's layer at a time)"));
+            t.setOnAction(e -> {
+                iceOn = iceToggle.isSelected();
+                fireOn = fireToggle.isSelected();
+                thunderOn = thunderToggle.isSelected();
+                applyGlow();
+            });
+        }
         bonesToggle.getStyleClass().add("channel-toggle");
         bonesToggle.setDisable(true);
         bonesToggle.setTooltip(new javafx.scene.control.Tooltip("Show the skeleton (skinned models)"));
@@ -327,12 +349,14 @@ public final class ModelPreview {
         hint.getStyleClass().add("transport-label");
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
-        for (javafx.scene.control.Control c : List.of(texturesToggle, detailToggle, wireframeToggle, bonesToggle, lockjawToggle, reset)) {
+        for (javafx.scene.control.Control c : List.of(texturesToggle, detailToggle, wireframeToggle, bonesToggle, lockjawToggle,
+                iceToggle, fireToggle, thunderToggle, reset)) {
             c.setMinWidth(Region.USE_PREF_SIZE);
         }
         hint.setMinWidth(0);
         hint.setTooltip(new javafx.scene.control.Tooltip(hint.getText().replace("  ·  ", "\n")));
-        HBox row = new HBox(10, texturesToggle, detailToggle, wireframeToggle, bonesToggle, lockjawToggle, reset, spacer, hint);
+        HBox row = new HBox(10, texturesToggle, detailToggle, wireframeToggle, bonesToggle, lockjawToggle,
+            iceToggle, fireToggle, thunderToggle, reset, spacer, hint);
         row.setAlignment(Pos.CENTER_LEFT);
         viewRow = row;
         controls.getChildren().addAll(infoLabel, row);
@@ -1357,6 +1381,18 @@ public final class ModelPreview {
                 return;
             }
             PakAssetRef base = mat < refs.size() ? refs.get(mat) : null;
+            PakAssetRef lightRamp = LIGHT_STRIP_SHADER.equals(loaded.model().materials().get(mat).shader()) ? loaded.slot(mat, "BCLR:6") : null;
+            if (lightRamp != null) {
+                Image ramp = cached(byTexture, lightRamp.asset().assetId() + ":strip", () -> toImage(decodeRaw(lightRamp, MAX_TEXTURE_SIZE)));
+                if (ramp != null) {
+                    Platform.runLater(() -> {
+                        textures.put(key, ramp);
+                        glowMaps.put(key, new Image[] {ramp});
+                        applyTextures();
+                    });
+                }
+                continue;
+            }
             // Blended submeshes: alpha is opacity (visor setting). Opaque ones keep it only when it's a
             // cut-out (eyelashes on the face texture) -- otherwise it's a glow mask.
             boolean cutout = key >= 0 && base != null && isCutout(base);
@@ -1385,9 +1421,21 @@ public final class ModelPreview {
                     () -> decodeMetalDiffuse(baseColor(base, paint, keepAlpha, MAX_TEXTURE_SIZE), metl, MAX_TEXTURE_SIZE));
             PakAssetRef ican = loaded.slot(mat, "ICAN");
             boolean blended = key < 0 || isVisorKey(key);
-            Image[] glow = ican == null || base == null ? null
-                : cachedFrames(byFrames, base.asset().assetId() + ":g:" + ican.asset().assetId() + (blended ? ":b" : ""),
-                    () -> decodeGlowMap(base, ican, blended, MAX_TEXTURE_SIZE));
+            float[] tint = loaded.glowColor(mat);
+            String glowKey = ican == null || base == null ? null : base.asset().assetId() + ":g:" + ican.asset().assetId() + (blended ? ":b" : "")
+                + (tint == null ? "" : ":t" + java.util.Arrays.toString(tint));
+            Image[] maskGlow = glowKey == null ? null
+                : cachedFrames(byFrames, glowKey, () -> decodeGlowMap(base, ican, blended, tint, MAX_TEXTURE_SIZE));
+            // The layered shader's emissive layer (the slots on top of the cannon): lit, and black underneath
+            // -- in game it replaces the base colour, and the purple base turned the green glow aqua.
+            // Its green lights are steady in game, though its table changes down its length: one frame.
+            boolean layered = !blended && LAYERED_SHADER.equals(loaded.model().materials().get(mat).shader());
+            Image[] steady = layered && maskGlow != null && maskGlow.length > 1 ? new Image[] {maskGlow[maskGlow.length / 2]} : maskGlow;
+            LayerMask layer = glowKey == null || metl == null || !layered ? null : emissiveLayerOrNull(metl);
+            Image[] glow = layer == null ? steady
+                : cachedFrames(byFrames, glowKey + ":L:" + metl.asset().assetId(), () -> withEmissiveLayer(steady, layer, ican));
+            Image baseOut = layer == null || diffuse == null ? diffuse : blackOut(diffuse, layer);
+            Image metalOut = layer == null || metalDiffuse == null ? metalDiffuse : blackOut(metalDiffuse, layer);
             boolean holo = isHologram(loaded, mat);
             Image[] holoImages = holo ? cachedFrames(byFrames, "holo:" + mat + ":" + loaded.model().materials().get(mat).materialInstance(),
                 () -> decodeHologram(base, loaded.slot(mat, "TCH0"), ican, MAX_TEXTURE_SIZE)) : null;
@@ -1403,9 +1451,13 @@ public final class ModelPreview {
                 });
                 continue;
             }
+            String weapon = ican == null ? null : WEAPON_GLOWS.get(ican.asset().assetId());
             Platform.runLater(() -> {
-                if (diffuse != null) textures.put(key, diffuse);
-                if (metalDiffuse != null) metalTextures.put(key, metalDiffuse);
+                if (weapon != null && weaponKeys.put(key, weapon) == null) {
+                    showWeaponToggles();
+                }
+                if (baseOut != null) textures.put(key, baseOut);
+                if (metalOut != null) metalTextures.put(key, metalOut);
                 if (normal != null) normalMaps.put(key, normal);
                 if (specular != null) specularMaps.put(key, specular);
                 if (glow != null) glowMaps.put(key, glow);
@@ -1498,6 +1550,14 @@ public final class ModelPreview {
         }
         cache.put(key, frames);
         return frames;
+    }
+
+    private static LayerMask emissiveLayerOrNull(PakAssetRef metl) {
+        try {
+            return emissiveLayer(metl, MAX_TEXTURE_SIZE);
+        } catch (Exception | OutOfMemoryError e) {
+            return null;
+        }
     }
 
     private static Image cached(Map<String, Image> cache, String key, Decode decode) {
@@ -1884,6 +1944,113 @@ public final class ModelPreview {
         modelGroup.getChildren().setAll(kids);
     }
 
+    /**
+     * The arm cannon's light strips: no texture slots of type 5, a 128x8 colour ramp (dark grey ->
+     * orange -> pale yellow) as a type-6 base colour, mapped by UV0. Drawn as a steady light (the ramp
+     * as base colour and glow); in game the light runs along the strip -- not reproduced yet.
+     */
+    private static final java.util.UUID LIGHT_STRIP_SHADER = java.util.UUID.fromString("c558787e-2ae0-4088-a233-56335f79f59e");
+    /** The cannon's layered shader (TCH0..TCH5 detail layers); METL blue picks a layer per texel. */
+    private static final java.util.UUID LAYERED_SHADER = java.util.UUID.fromString("fdf33b34-ce0a-4a6b-8c12-78e60953ac92");
+    /** METL blue of the layered shader's emissive layer: only the two small slots on top of the cannon
+     *  (purple in the base colour, green lights in game). The other layer values are 0, 12, 56, 76, 255. */
+    private static final int EMISSIVE_LAYER_ID = 40;
+
+    /** Texels of the layered shader's emissive layer, on the METL texture's grid. */
+    record LayerMask(boolean[] lit, int width, int height) {
+        boolean at(int x, int y, int w, int h) {
+            return lit[(y * height / h) * width + x * width / w];
+        }
+    }
+
+    /**
+     * The layered shader's emissive layer: METL blue = {@link #EMISSIVE_LAYER_ID}, or null when the
+     * material has none. Texels need most of their 3x3 neighbours in the layer too: blends between
+     * other layers pass through the value along their edges.
+     */
+    static LayerMask emissiveLayer(PakAssetRef metl, int maxSize) throws java.io.IOException {
+        TextureDecoder.Image ids = decodeRaw(metl, maxSize);
+        int iw = ids.width(), ih = ids.height();
+        boolean[] band = new boolean[iw * ih];
+        for (int i = 0; i < band.length; i++) {
+            band[i] = Math.abs((ids.argb()[i] & 0xFF) - EMISSIVE_LAYER_ID) <= 6;
+        }
+        boolean[] lit = new boolean[band.length];
+        boolean any = false;
+        for (int y = 0; y < ih; y++) {
+            for (int x = 0; x < iw; x++) {
+                if (!band[y * iw + x]) {
+                    continue;
+                }
+                int n = 0;
+                for (int dy = -1; dy <= 1; dy++) {
+                    for (int dx = -1; dx <= 1; dx++) {
+                        int xx = x + dx, yy = y + dy;
+                        if (xx >= 0 && yy >= 0 && xx < iw && yy < ih && band[yy * iw + xx]) {
+                            n++;
+                        }
+                    }
+                }
+                lit[y * iw + x] = n >= 5;
+                any |= n >= 5;
+            }
+        }
+        return any ? new LayerMask(lit, iw, ih) : null;
+    }
+
+    /**
+     * Adds the emissive layer to a glow map, lit in the brightest colour of each frame's row of the
+     * material's ICAN table (green on Varia).
+     */
+    static Image[] withEmissiveLayer(Image[] glow, LayerMask layer, PakAssetRef ican) throws java.io.IOException {
+        TextureDecoder.Image lut = decodeRaw(ican, 256);
+        int lw = lut.width(), lh = lut.height();
+        int frames = glow != null ? glow.length : 1;
+        int w = glow != null ? (int) glow[0].getWidth() : layer.width(), h = glow != null ? (int) glow[0].getHeight() : layer.height();
+        Image[] out = new Image[frames];
+        for (int f = 0; f < frames; f++) {
+            int row = frames > 1 ? (int) ((f + 0.5) / frames * lh) : lh / 2, colour = 0, best = -1;
+            for (int x = 0; x < lw; x++) {
+                int p = lut.argb()[row * lw + x];
+                int sum = ((p >> 16) & 0xFF) + ((p >> 8) & 0xFF) + (p & 0xFF);
+                if (sum > best) {
+                    best = sum;
+                    colour = p & 0xFFFFFF;
+                }
+            }
+            int[] px = new int[w * h];
+            if (glow != null) {
+                glow[f].getPixelReader().getPixels(0, 0, w, h, PixelFormat.getIntArgbInstance(), px, 0, w);
+            } else {
+                java.util.Arrays.fill(px, 0xFF000000);
+            }
+            for (int y = 0; y < h; y++) {
+                for (int x = 0; x < w; x++) {
+                    if (layer.at(x, y, w, h)) {
+                        px[y * w + x] = 0xFF000000 | colour;
+                    }
+                }
+            }
+            out[f] = toImageRaw(w, h, px);
+        }
+        return out;
+    }
+
+    /** A copy of {@code img} with the emissive layer's texels black (alpha kept). */
+    static Image blackOut(Image img, LayerMask layer) {
+        int w = (int) img.getWidth(), h = (int) img.getHeight();
+        int[] px = new int[w * h];
+        img.getPixelReader().getPixels(0, 0, w, h, PixelFormat.getIntArgbInstance(), px, 0, w);
+        for (int y = 0; y < h; y++) {
+            for (int x = 0; x < w; x++) {
+                if (layer.at(x, y, w, h)) {
+                    px[y * w + x] &= 0xFF000000;
+                }
+            }
+        }
+        return toImageRaw(w, h, px);
+    }
+
     /** Animated glow: frames per loop and loop length in seconds (the game's timing isn't decoded). */
     private static final int GLOW_FRAMES = 20;
     private static final double GLOW_PERIOD = 3.0;
@@ -1898,9 +2065,11 @@ public final class ModelPreview {
      *     also scales the brightness), down = time -- strips that change down the table (the arm cannon's lights)
      *     are played as an animation of {@link #GLOW_FRAMES} frames.</li>
      * </ul>
+     * A grey table gets its colour from the material's ICNC ({@code tint}, may exceed 1): the
+     * third-person body's cannon (a white 4x4 table, ICNC 4.0 / 2.95 / 0.12 = orange) glowed white.
      * Returns null when nothing glows.
      */
-    static Image[] decodeGlowMap(PakAssetRef base, PakAssetRef ican, boolean blended, int maxSize) throws java.io.IOException {
+    static Image[] decodeGlowMap(PakAssetRef base, PakAssetRef ican, boolean blended, float[] tint, int maxSize) throws java.io.IOException {
         int baseWidth = header(base).width();
         TextureHeader icanHeader = header(ican);
         boolean uvLayout = icanHeader.width() == baseWidth && icanHeader.height() == header(base).height();
@@ -1980,6 +2149,11 @@ public final class ModelPreview {
             return null;
         }
         int[] column = dominantColumns(mask, lw);
+        boolean grey = tint != null && !sweep;
+        for (int i = 0; i < table.length && grey; i++) {
+            int p = table[i], r = (p >> 16) & 0xFF, g = (p >> 8) & 0xFF, b = p & 0xFF;
+            grey = Math.abs(r - g) <= 8 && Math.abs(g - b) <= 8;
+        }
         int frames = animated ? GLOW_FRAMES : 1;
         Image[] out = new Image[frames];
         boolean lit = false;
@@ -2000,6 +2174,11 @@ public final class ModelPreview {
                 // The mask also sets brightness: some tables are one colour across (Sylux's green),
                 // and their faint mask noise must stay faint.
                 c = (((c >> 16) & 0xFF) * a / 255) << 16 | (((c >> 8) & 0xFF) * a / 255) << 8 | (c & 0xFF) * a / 255;
+                if (grey) {
+                    c = Math.min(255, Math.round(((c >> 16) & 0xFF) * tint[0])) << 16
+                        | Math.min(255, Math.round(((c >> 8) & 0xFF) * tint[1])) << 8
+                        | Math.min(255, Math.round((c & 0xFF) * tint[2]));
+                }
                 lit |= c != 0 && ((c >> 16) & 0xFF) + ((c >> 8) & 0xFF) + (c & 0xFF) > 24;
                 frame[i] = 0xFF000000 | c;
             }
@@ -2163,11 +2342,44 @@ public final class ModelPreview {
         applyGlow();
     }
 
+    /**
+     * The arm cannon's weapon-state glow layers, by ICAN texture: the game lights only the active
+     * weapon's layer, so drawing all of them at once covered the cannon in blue, red and gold glow
+     * (docs/ARM-CANNON-LIGHTS.txt). Shared by every suit's first-person viewmodel and the cinematic
+     * gun. The green strip (d417b350 / 73ea4a64), orange top strips (82e288ea) and green arm dot
+     * (4465a1bf) stay always on.
+     */
+    static final Map<java.util.UUID, String> WEAPON_GLOWS = Map.of(
+        java.util.UUID.fromString("cfff67c8-6265-4078-a2a3-cb73c21a8876"), "Ice",     // blue panels (UV layout)
+        java.util.UUID.fromString("abbaa677-eac5-4d61-99ce-5d67f6bfae03"), "Fire",    // red / orange (UV layout)
+        java.util.UUID.fromString("564eb50e-2dd0-41ab-8b98-eab4eab1e0eb"), "Fire",    // orange ramp (Varia)
+        java.util.UUID.fromString("1df73e2f-f21c-4432-bcb0-22643fc0183d"), "Fire",    // the same slot on the other suits
+        java.util.UUID.fromString("24661de5-61b9-4ea3-9b88-c263fea9038a"), "Thunder"); // gold patterns (UV layout)
+    /** Material key -> weapon state, for materials whose glow is a weapon layer. */
+    private final Map<Integer, String> weaponKeys = new HashMap<>();
+
+    private void showWeaponToggles() {
+        for (ToggleButton t : List.of(iceToggle, fireToggle, thunderToggle)) {
+            boolean has = weaponKeys.containsValue(t.getText());
+            t.setVisible(has);
+            t.setManaged(has);
+        }
+    }
+
+    private boolean weaponLit(String weapon) {
+        return switch (weapon) {
+            case "Ice" -> iceToggle.isSelected();
+            case "Fire" -> fireToggle.isSelected();
+            default -> thunderToggle.isSelected();
+        };
+    }
+
     private void applyGlow() {
         boolean detail = texturesToggle.isSelected() && detailToggle.isSelected();
         boolean animating = false;
         for (Map.Entry<Integer, PhongMaterial> e : materials.entrySet()) {
-            Image[] frames = detail ? glowMaps.get(e.getKey()) : null;
+            String weapon = weaponKeys.get(e.getKey());
+            Image[] frames = detail && (weapon == null || weaponLit(weapon)) ? glowMaps.get(e.getKey()) : null;
             e.getValue().setSelfIlluminationMap(frames == null ? null : frames[glowFrame % frames.length]);
             animating |= frames != null && frames.length > 1;
         }

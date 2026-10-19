@@ -37,9 +37,16 @@ public final class ModelLoader {
      * @param textureSlots      per material index, every texture slot found (tag -> TXTR): BCLR base colour,
      *                          NMAP normal map, METL packed metal (R) / roughness (G), ICAN incandescence
      *                          (glow colour ramp), TCHn tiling detail layers
+     * @param glowColors        per material index, the MATI's ICNC colour (RGBA, may exceed 1: a glow
+     *                          multiplier), or null
      */
     public record LoadedModel(CmdlModel model, List<PakAssetRef> baseColorTextures,
-                              List<Map<String, PakAssetRef>> textureSlots) {
+                              List<Map<String, PakAssetRef>> textureSlots, List<float[]> glowColors) {
+        /** Material {@code index}'s ICNC glow colour, or null. */
+        public float[] glowColor(int index) {
+            return index >= 0 && index < glowColors.size() ? glowColors.get(index) : null;
+        }
+
         /** The texture in {@code slot} for material {@code index}, or null. */
         public PakAssetRef slot(int index, String slot) {
             return index >= 0 && index < textureSlots.size() ? textureSlots.get(index).get(slot) : null;
@@ -55,8 +62,12 @@ public final class ModelLoader {
 
         List<PakAssetRef> baseColors = new ArrayList<>();
         List<Map<String, PakAssetRef>> allSlots = new ArrayList<>();
+        List<float[]> glowColors = new ArrayList<>();
         Map<UUID, Map<String, UUID>> matiCache = new LinkedHashMap<>();
+        Map<UUID, float[]> colorCache = new LinkedHashMap<>();
         for (CmdlModel.MaterialRef mat : model.materials()) {
+            glowColors.add(mat.materialInstance() == null || library == null ? null
+                : colorCache.computeIfAbsent(mat.materialInstance(), id -> materialColor(id, library, "ICNC")));
             Map<String, UUID> slots = mat.inlineTextures();
             if (slots.isEmpty() && mat.materialInstance() != null && library != null) {
                 slots = matiCache.computeIfAbsent(mat.materialInstance(), id -> scanMaterialInstance(id, library));
@@ -73,7 +84,43 @@ public final class ModelLoader {
             }
             allSlots.add(refs);
         }
-        return new LoadedModel(model, baseColors, allSlots);
+        return new LoadedModel(model, baseColors, allSlots, glowColors);
+    }
+
+    /**
+     * A colour value from a MATI: {@code tag}, type 3, then four floats. The MATI's name table
+     * repeats the tags with other bytes after them, so only plausible values count (the last wins:
+     * the values come after the table). Null if absent.
+     */
+    private static float[] materialColor(UUID id, String tag, byte[] d) {
+        float[] found = null;
+        for (int i = 0; i + 21 <= d.length; i++) {
+            if (d[i + 4] != 3 || !isTag(d, i) || !new String(d, i, 4, java.nio.charset.StandardCharsets.US_ASCII).equals(tag)) {
+                continue;
+            }
+            float[] c = new float[4];
+            boolean ok = true;
+            for (int k = 0; k < 4; k++) {
+                c[k] = Float.intBitsToFloat(com.mocktroid.format.LE.i32(d, i + 5 + k * 4));
+                ok &= Float.isFinite(c[k]) && c[k] >= 0 && c[k] <= 100;
+            }
+            if (ok) {
+                found = c;
+            }
+        }
+        return found;
+    }
+
+    private static float[] materialColor(UUID id, AssetLibrary library, String tag) {
+        PakAssetRef mati = library.lookup(id);
+        if (mati == null) {
+            return null;
+        }
+        try {
+            return materialColor(id, tag, PackCatalog.extractDecompressed(mati.pakFile(), mati.asset()));
+        } catch (IOException | RuntimeException e) {
+            return null;
+        }
     }
 
     private static PakAssetRef pickBaseColor(Map<String, UUID> slots, AssetLibrary library) {
@@ -106,13 +153,17 @@ public final class ModelLoader {
         }
         for (int i = 0; i + 21 <= d.length; i++) {
             // Type 5 = texture; type 8 = texture with sampler settings (the map holograms' base colour).
-            if ((d[i + 4] != MATI_TEXTURE_TYPE && d[i + 4] != 8) || !isTag(d, i)) {
+            // Type 6 (106 MATIs, ~30 shaders) is kept under "<tag>:6": the arm cannon's light strips
+            // (shader c558787e) keep their colour ramp there; what it is for the other shaders is unchecked.
+            int type = d[i + 4];
+            if ((type != MATI_TEXTURE_TYPE && type != 6 && type != 8) || !isTag(d, i)) {
                 continue;
             }
             UUID tex = GuidUtil.fromBytesLe(d, i + 5);
             PakAssetRef ref = library.lookup(tex);
             if (ref != null && ref.asset().assetType().toString().equals("TXTR")) {
-                slots.putIfAbsent(new String(d, i, 4, java.nio.charset.StandardCharsets.US_ASCII), tex);
+                String tag = new String(d, i, 4, java.nio.charset.StandardCharsets.US_ASCII);
+                slots.putIfAbsent(type == 6 ? tag + ":6" : tag, tex);
             }
         }
         return slots;
